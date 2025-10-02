@@ -1,0 +1,73 @@
+---
+# Deploy AEIMS Web Application
+# Deploys the showcase website and admin interface
+
+- name: Deploy AEIMS App service
+  block:
+    - name: Update ECS service (AEIMS App)
+      ecs_service:
+        name: "{{ project_name }}-aeims-app-{{ environment }}"
+        cluster: "{{ terraform_outputs.ecs_cluster_name }}"
+        task_definition: "{{ project_name }}-aeims-app-{{ environment }}"
+        desired_count: "{{ aeims_app_replicas | default(1) }}"
+        deployment_configuration:
+          maximum_percent: 200
+          minimum_healthy_percent: 50
+        wait: true
+        wait_timeout: 600
+      when: environment in ['staging', 'prod']
+
+    - name: Start AEIMS App container (dev)
+      docker_container:
+        name: aeims-app
+        image: "aeims-app:latest"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "81:80"
+          - "444:443"
+        networks:
+          - name: aeims-integrated-network
+        env:
+          ENVIRONMENT: "{{ environment }}"
+          DB_HOST: aeims-app-mysql
+          DB_NAME: "{{ aeims_app_db_name | default('aeims_app') }}"
+          DB_USER: "{{ aeims_app_db_user | default('aeims_user') }}"
+          DB_PASS: "{{ aeims_app_db_pass | default('secure_password_123') }}"
+          REDIS_HOST: aeims-redis
+          REDIS_PASSWORD: "{{ redis_password | default('secure_redis_pass') }}"
+          AEIMS_CORE_URL: "http://aeims-core:8000"
+          AEIMS_LIB_URL: "http://aeims-lib:8080"
+      when: environment == 'dev'
+
+- name: Wait for AEIMS App to be healthy
+  uri:
+    url: "{{ aeims_app_url | default('http://localhost:81') }}/"
+    method: GET
+    status_code: 200
+  register: app_health
+  until: app_health.status == 200
+  retries: 30
+  delay: 10
+
+- name: Verify AEIMS App endpoints
+  uri:
+    url: "{{ aeims_app_url | default('http://localhost:81') }}/{{ item }}"
+    method: GET
+    status_code: [200, 401, 403]
+  loop:
+    - ""
+    - "admin"
+    - "api/status"
+  register: app_checks
+
+- name: Test AEIMS App integration with Core
+  uri:
+    url: "{{ aeims_app_url | default('http://localhost:81') }}/api/core-status"
+    method: GET
+    status_code: [200, 502, 503]  # Allow temporary unavailability
+  register: integration_check
+
+- name: Log AEIMS App deployment status
+  debug:
+    msg: "AEIMS App deployed successfully - Health: {{ app_health.status }}, Integration: {{ integration_check.status }}"

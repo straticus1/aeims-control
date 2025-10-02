@@ -1,0 +1,188 @@
+---
+# AEIMS Infrastructure Management System
+# Main Ansible Playbook for complete AEIMS deployment
+# Compatible with SuperDeploy deployment system
+
+- name: Deploy AEIMS Infrastructure and Applications
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars_files:
+    - vars/main.yml
+    - vars/secrets.yml
+  
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    
+  pre_tasks:
+    - name: Verify required variables are defined
+      assert:
+        that:
+          - project_name is defined
+          - environment is defined
+          - aws_region is defined
+        fail_msg: "Required variables (project_name, environment, aws_region) must be defined"
+
+    - name: Set deployment timestamp
+      set_fact:
+        deployment_timestamp: "{{ ansible_date_time.epoch }}"
+
+    - name: Create deployment log directory
+      file:
+        path: "{{ playbook_dir }}/logs"
+        state: directory
+        mode: '0755'
+
+    - name: Start deployment logging
+      lineinfile:
+        path: "{{ playbook_dir }}/logs/deployment-{{ ansible_date_time.date }}.log"
+        line: "[{{ ansible_date_time.iso8601 }}] Starting AEIMS deployment for environment: {{ environment }}"
+        create: yes
+
+  tasks:
+    # Infrastructure Preparation
+    - name: Infrastructure Preparation
+      block:
+        - import_tasks: tasks/infrastructure-prep.yml
+      tags: ['infrastructure', 'prep']
+
+    # Container Build and Push
+    - name: Container Build and Deployment
+      block:
+        - import_tasks: tasks/container-build.yml
+        - import_tasks: tasks/container-push.yml
+      tags: ['containers', 'build']
+
+    # Database Setup
+    - name: Database Configuration
+      block:
+        - import_tasks: tasks/database-setup.yml
+      tags: ['database', 'setup']
+
+    # AEIMS Core Deployment
+    - name: Deploy AEIMS Core Platform
+      block:
+        - import_tasks: tasks/deploy-aeims-core.yml
+      when: feature_flags.enable_aeims_core | default(true)
+      tags: ['aeims-core', 'core']
+
+    # AEIMS App Deployment
+    - name: Deploy AEIMS Web Application
+      block:
+        - import_tasks: tasks/deploy-aeims-app.yml
+      when: feature_flags.enable_aeims_app | default(true)
+      tags: ['aeims-app', 'web']
+
+    # AEIMS Lib Deployment
+    - name: Deploy AEIMS Library Service
+      block:
+        - import_tasks: tasks/deploy-aeims-lib.yml
+      when: feature_flags.enable_aeims_lib | default(true)
+      tags: ['aeims-lib', 'device']
+
+    # Microservices Deployment
+    - name: Deploy AEIMS Microservices
+      block:
+        - import_tasks: tasks/deploy-microservices.yml
+      tags: ['microservices', 'services']
+
+    # Load Balancer Configuration
+    - name: Configure Load Balancer and Routing
+      block:
+        - import_tasks: tasks/load-balancer.yml
+      tags: ['load-balancer', 'routing']
+
+    # Monitoring Setup
+    - name: Setup Monitoring and Alerting
+      block:
+        - import_tasks: tasks/monitoring.yml
+      when: feature_flags.enable_monitoring | default(true)
+      tags: ['monitoring', 'alerts']
+
+    # Service Integration Testing
+    - name: Integration Testing
+      block:
+        - import_tasks: tasks/integration-tests.yml
+      tags: ['testing', 'integration']
+
+  post_tasks:
+    - name: Deployment Summary
+      debug:
+        msg:
+          - "====== AEIMS Deployment Complete ======"
+          - "Project: {{ project_name }}"
+          - "Environment: {{ environment }}"
+          - "Region: {{ aws_region }}"
+          - "Deployment Time: {{ ansible_date_time.iso8601 }}"
+          - "Duration: {{ (ansible_date_time.epoch | int) - (deployment_timestamp | int) }} seconds"
+          - "Load Balancer: {{ terraform_outputs.alb_dns_name | default('Not configured') }}"
+          - "Services Deployed:"
+          - "  - AEIMS Core: {{ 'Enabled' if feature_flags.enable_aeims_core else 'Disabled' }}"
+          - "  - AEIMS App: {{ 'Enabled' if feature_flags.enable_aeims_app else 'Disabled' }}"
+          - "  - AEIMS Lib: {{ 'Enabled' if feature_flags.enable_aeims_lib else 'Disabled' }}"
+          - "  - Monitoring: {{ 'Enabled' if feature_flags.enable_monitoring else 'Disabled' }}"
+
+    - name: Log deployment completion
+      lineinfile:
+        path: "{{ playbook_dir }}/logs/deployment-{{ ansible_date_time.date }}.log"
+        line: "[{{ ansible_date_time.iso8601 }}] AEIMS deployment completed successfully in {{ (ansible_date_time.epoch | int) - (deployment_timestamp | int) }} seconds"
+
+  handlers:
+    - name: restart aeims-core
+      uri:
+        url: "http://{{ terraform_outputs.alb_dns_name }}/api/system/restart"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aeims_admin_token }}"
+      when: terraform_outputs.alb_dns_name is defined
+
+    - name: restart aeims-app
+      uri:
+        url: "http://{{ terraform_outputs.alb_dns_name }}/admin/system/restart"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aeims_admin_token }}"
+      when: terraform_outputs.alb_dns_name is defined
+
+    - name: restart aeims-lib
+      uri:
+        url: "http://{{ terraform_outputs.alb_dns_name }}/device/system/restart"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aeims_admin_token }}"
+      when: terraform_outputs.alb_dns_name is defined
+
+    - name: invalidate cache
+      uri:
+        url: "http://{{ terraform_outputs.alb_dns_name }}/api/cache/clear"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aeims_admin_token }}"
+      when: terraform_outputs.alb_dns_name is defined
+
+# Cleanup Playbook
+- name: AEIMS Cleanup Tasks
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars_files:
+    - vars/main.yml
+  
+  tasks:
+    - name: Clean up temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/aeims-build
+        - /tmp/docker-build
+        - /tmp/terraform-plan
+
+    - name: Archive deployment logs
+      archive:
+        path: "{{ playbook_dir }}/logs/"
+        dest: "{{ playbook_dir }}/archives/deployment-{{ ansible_date_time.date }}.tar.gz"
+        format: gz
+      when: environment == "prod"
+
+  tags: ['cleanup']

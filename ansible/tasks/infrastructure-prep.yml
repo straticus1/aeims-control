@@ -1,0 +1,48 @@
+---
+# Infrastructure Preparation Tasks
+# Prepares the environment for AEIMS deployment
+
+- name: Create deployment directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ playbook_dir }}/../logs"
+    - "{{ playbook_dir }}/../tmp"
+    - "{{ playbook_dir }}/../archives"
+
+- name: Check AWS CLI configuration
+  command: aws sts get-caller-identity
+  register: aws_identity
+  changed_when: false
+
+- name: Display AWS identity
+  debug:
+    msg: "Deploying with AWS Account: {{ (aws_identity.stdout | from_json).Account }}"
+
+- name: Verify Terraform outputs exist
+  stat:
+    path: "{{ playbook_dir }}/../terraform-outputs.json"
+  register: tf_outputs
+
+- name: Load Terraform outputs
+  set_fact:
+    terraform_outputs: "{{ lookup('file', playbook_dir + '/../terraform-outputs.json') | from_json }}"
+  when: tf_outputs.stat.exists
+
+- name: Create environment-specific configuration
+  template:
+    src: "{{ playbook_dir }}/templates/environment.conf.j2"
+    dest: "{{ playbook_dir }}/../.env.{{ environment }}"
+    mode: '0600'
+  vars:
+    env_config:
+      environment: "{{ environment }}"
+      region: "{{ aws_region }}"
+      project: "{{ project_name }}"
+
+- name: Set deployment facts
+  set_fact:
+    deployment_id: "{{ ansible_date_time.epoch }}"
+    deployment_tag: "{{ environment }}-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}"

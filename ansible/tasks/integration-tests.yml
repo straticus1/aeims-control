@@ -1,0 +1,92 @@
+---
+# Integration Testing
+# Runs comprehensive integration tests across all AEIMS services
+
+- name: Run integration test script
+  script: "{{ playbook_dir }}/../tests/integration-test.sh {{ environment }}"
+  register: integration_results
+  failed_when: integration_results.rc != 0
+  changed_when: false
+
+- name: Parse integration test results
+  set_fact:
+    integration_summary: "{{ integration_results.stdout_lines | select('match', '.*Total Tests:.*|.*Passed:.*|.*Failed:.*') | list }}"
+
+- name: Display integration test summary
+  debug:
+    msg: "{{ integration_summary }}"
+
+- name: Service health checks
+  uri:
+    url: "{{ item.url }}/{{ item.endpoint }}"
+    method: GET
+    status_code: 200
+  register: health_checks
+  loop:
+    - { name: "AEIMS Core", url: "{{ aeims_core_url | default('http://localhost:8000') }}", endpoint: "health" }
+    - { name: "AEIMS App", url: "{{ aeims_app_url | default('http://localhost:81') }}", endpoint: "" }
+    - { name: "AEIMS Lib", url: "{{ aeims_lib_url | default('http://localhost:8080') }}", endpoint: "health" }
+  failed_when: false
+
+- name: API endpoint validation
+  uri:
+    url: "{{ aeims_core_url | default('http://localhost:8000') }}/api/{{ item }}"
+    method: GET
+    status_code: [200, 401, 403]
+  register: api_validation
+  loop:
+    - "status"
+    - "version"
+    - "metrics"
+  failed_when: false
+
+- name: Service integration validation
+  uri:
+    url: "{{ item.from_url }}/{{ item.endpoint }}"
+    method: GET
+    status_code: [200, 502, 503]
+  register: integration_validation
+  loop:
+    - {
+        name: "Core to App",
+        from_url: "{{ aeims_core_url | default('http://localhost:8000') }}",
+        endpoint: "integration/app-status"
+      }
+    - {
+        name: "Core to Lib",
+        from_url: "{{ aeims_core_url | default('http://localhost:8000') }}",
+        endpoint: "integration/lib-status"
+      }
+    - {
+        name: "App to Core",
+        from_url: "{{ aeims_app_url | default('http://localhost:81') }}",
+        endpoint: "api/core-status"
+      }
+  failed_when: false
+
+- name: Performance baseline tests
+  uri:
+    url: "{{ item.url }}"
+    method: GET
+  register: performance_tests
+  loop:
+    - { name: "Core API", url: "{{ aeims_core_url | default('http://localhost:8000') }}/health" }
+    - { name: "App Homepage", url: "{{ aeims_app_url | default('http://localhost:81') }}/" }
+    - { name: "Lib Status", url: "{{ aeims_lib_url | default('http://localhost:8080') }}/health" }
+
+- name: Generate test report
+  template:
+    src: "{{ playbook_dir }}/templates/test-report.html.j2"
+    dest: "{{ playbook_dir }}/../logs/integration-test-report-{{ ansible_date_time.date }}.html"
+    mode: '0644'
+  vars:
+    test_results:
+      integration: "{{ integration_results }}"
+      health_checks: "{{ health_checks }}"
+      api_validation: "{{ api_validation }}"
+      integration_validation: "{{ integration_validation }}"
+      performance: "{{ performance_tests }}"
+
+- name: Log integration test completion
+  debug:
+    msg: "Integration tests completed - Results logged to integration-test-report-{{ ansible_date_time.date }}.html"

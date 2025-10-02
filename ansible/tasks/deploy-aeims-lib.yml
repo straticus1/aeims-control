@@ -1,0 +1,69 @@
+---
+# Deploy AEIMS Library Service
+# Deploys the device management and WebSocket service
+
+- name: Deploy AEIMS Lib service
+  block:
+    - name: Update ECS service (AEIMS Lib)
+      ecs_service:
+        name: "{{ project_name }}-aeims-lib-{{ environment }}"
+        cluster: "{{ terraform_outputs.ecs_cluster_name }}"
+        task_definition: "{{ project_name }}-aeims-lib-{{ environment }}"
+        desired_count: "{{ aeims_lib_replicas | default(1) }}"
+        deployment_configuration:
+          maximum_percent: 200
+          minimum_healthy_percent: 50
+        wait: true
+        wait_timeout: 600
+      when: environment in ['staging', 'prod']
+
+    - name: Start AEIMS Lib container (dev)
+      docker_container:
+        name: aeims-lib
+        image: "aeims-lib:latest"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "8080:8080"
+        networks:
+          - name: aeims-integrated-network
+        env:
+          NODE_ENV: "{{ node_env | default('development') }}"
+          WEBSOCKET_PORT: "8080"
+          REDIS_HOST: aeims-redis
+          REDIS_PASSWORD: "{{ redis_password | default('secure_redis_pass') }}"
+          AEIMS_CORE_URL: "http://aeims-core:8000"
+          AEIMS_APP_URL: "http://aeims-app:80"
+      when: environment == 'dev'
+
+- name: Wait for AEIMS Lib to be healthy
+  uri:
+    url: "{{ aeims_lib_url | default('http://localhost:8080') }}/health"
+    method: GET
+    status_code: 200
+  register: lib_health
+  until: lib_health.status == 200
+  retries: 30
+  delay: 10
+
+- name: Verify AEIMS Lib API endpoints
+  uri:
+    url: "{{ aeims_lib_url | default('http://localhost:8080') }}/{{ item }}"
+    method: GET
+    status_code: [200, 401, 403]
+  loop:
+    - "health"
+    - "status"
+    - "devices"
+  register: lib_checks
+
+- name: Test WebSocket connection
+  uri:
+    url: "{{ aeims_lib_url | default('http://localhost:8080') }}/ws/status"
+    method: GET
+    status_code: [200, 426]  # 426 = Upgrade Required (WebSocket)
+  register: ws_check
+
+- name: Log AEIMS Lib deployment status
+  debug:
+    msg: "AEIMS Lib deployed successfully - Health: {{ lib_health.status }}, WebSocket: {{ ws_check.status }}"

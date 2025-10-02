@@ -1,0 +1,95 @@
+---
+# Load Balancer Configuration
+# Configures routing and load balancing for AEIMS services
+
+- name: Configure Nginx load balancer
+  block:
+    - name: Create Nginx configuration directory
+      file:
+        path: "{{ playbook_dir }}/../nginx"
+        state: directory
+        mode: '0755'
+
+    - name: Generate Nginx configuration
+      template:
+        src: "{{ playbook_dir }}/templates/nginx.conf.j2"
+        dest: "{{ playbook_dir }}/../nginx/nginx.conf"
+        mode: '0644'
+      vars:
+        services:
+          - { name: "aeims-core", upstream: "aeims-core:8000", paths: ["/api", "/telephony", "/calls"] }
+          - { name: "aeims-app", upstream: "aeims-app:80", paths: ["/admin", "/dashboard"] }
+          - { name: "aeims-lib", upstream: "aeims-lib:8080", paths: ["/ws", "/device", "/control"] }
+          - { name: "frontend", upstream: "aeims-frontend:3000", paths: ["/app", "/ui"] }
+          - { name: "user-service", upstream: "aeims-user-service:8001", paths: ["/users"] }
+          - { name: "billing-service", upstream: "aeims-billing-service:8002", paths: ["/billing"] }
+          - { name: "analytics-service", upstream: "aeims-analytics-service:8007", paths: ["/analytics"] }
+
+    - name: Deploy Nginx container (dev)
+      docker_container:
+        name: aeims-nginx
+        image: nginx:alpine
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "80:80"
+          - "443:443"
+        networks:
+          - name: aeims-integrated-network
+        volumes:
+          - "{{ playbook_dir }}/../nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+          - "{{ playbook_dir }}/../nginx/ssl:/etc/nginx/ssl:ro"
+        depends_on:
+          - aeims-core
+          - aeims-app
+          - aeims-lib
+      when: environment == 'dev'
+
+- name: Wait for load balancer to be ready
+  uri:
+    url: "http://localhost/health"
+    method: GET
+    status_code: 200
+  register: lb_health
+  until: lb_health.status == 200
+  retries: 10
+  delay: 5
+  when: environment == 'dev'
+
+- name: Test load balancer routing
+  uri:
+    url: "http://localhost{{ item.path }}"
+    method: GET
+    status_code: [200, 401, 403, 502, 503]
+  loop:
+    - { path: "/api/health" }
+    - { path: "/admin" }
+    - { path: "/ws/status" }
+    - { path: "/app" }
+  register: routing_tests
+  when: environment == 'dev'
+
+- name: Configure ALB listener rules (cloud)
+  block:
+    - name: Update ALB target groups
+      elb_target_group:
+        name: "{{ project_name }}-{{ item.name }}-tg-{{ environment }}"
+        protocol: HTTP
+        port: "{{ item.port }}"
+        vpc_id: "{{ terraform_outputs.vpc_id }}"
+        health_check_path: "{{ item.health_path }}"
+        health_check_interval: 30
+        health_check_timeout: 5
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 3
+        state: present
+      loop:
+        - { name: "aeims-core", port: 8000, health_path: "/health" }
+        - { name: "aeims-app", port: 80, health_path: "/" }
+        - { name: "aeims-lib", port: 8080, health_path: "/health" }
+        - { name: "frontend", port: 3000, health_path: "/" }
+      when: terraform_outputs.vpc_id is defined
+
+- name: Log load balancer status
+  debug:
+    msg: "Load balancer configured successfully - Health: {{ lb_health.status | default('N/A') }}"

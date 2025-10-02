@@ -1,0 +1,98 @@
+---
+# Build Single Docker Service
+# This task builds a single Docker service for AEIMS
+
+- name: "{{ service_name }} - Check if Dockerfile exists"
+  stat:
+    path: "{{ service_config.context }}/{{ service_config.dockerfile }}"
+  register: dockerfile_check
+
+- name: "{{ service_name }} - Create Dockerfile if it doesn't exist"
+  template:
+    src: "Dockerfile.{{ service_name }}.j2"
+    dest: "{{ service_config.context }}/{{ service_config.dockerfile }}"
+    mode: '0644'
+  when: not dockerfile_check.stat.exists
+
+- name: "{{ service_name }} - Copy source code to build directory"
+  synchronize:
+    src: "{{ service_config.context }}/"
+    dest: "{{ aeims_build_dir }}/{{ service_name }}/"
+    delete: yes
+    recursive: yes
+    rsync_opts:
+      - "--exclude=node_modules"
+      - "--exclude=.git"
+      - "--exclude=.env"
+      - "--exclude=vendor"
+      - "--exclude=*.log"
+
+- name: "{{ service_name }} - Create .env file from template"
+  template:
+    src: "env.{{ service_name }}.j2"
+    dest: "{{ aeims_build_dir }}/{{ service_name }}/.env"
+    mode: '0600'
+  when: environment != 'prod'  # In prod, use environment variables
+
+- name: "{{ service_name }} - Build Docker image"
+  community.docker.docker_image:
+    name: "{{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}"
+    tag: "{{ ansible_date_time.epoch }}"
+    build:
+      path: "{{ aeims_build_dir }}/{{ service_name }}"
+      dockerfile: "{{ service_config.dockerfile }}"
+      pull: yes
+      args: "{{ docker.build_args | join(' ') }}"
+      cache_from:
+        - "{{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}:latest"
+    source: build
+    state: present
+    force_source: yes
+  register: docker_build_result
+
+- name: "{{ service_name }} - Tag image as latest"
+  community.docker.docker_image:
+    name: "{{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}"
+    repository: "{{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}"
+    tag: latest
+    source: local
+    state: present
+
+- name: "{{ service_name }} - Create build info file"
+  copy:
+    content: |
+      {
+        "service": "{{ service_name }}",
+        "environment": "{{ environment }}",
+        "build_time": "{{ ansible_date_time.iso8601 }}",
+        "build_user": "{{ ansible_user_id }}",
+        "git_commit": "{{ git_commit | default('unknown') }}",
+        "image_id": "{{ docker_build_result.image.Id }}",
+        "image_tags": [
+          "{{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}:{{ ansible_date_time.epoch }}",
+          "{{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}:latest"
+        ]
+      }
+    dest: "{{ aeims_build_dir }}/{{ service_name }}/build-info.json"
+    mode: '0644'
+
+- name: "{{ service_name }} - Run container security scan"
+  shell: |
+    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+      -v {{ aeims_build_dir }}/{{ service_name }}:/tmp/scan \
+      aquasec/trivy:latest image \
+      --format json \
+      --output /tmp/scan/security-scan.json \
+      {{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}:latest
+  register: security_scan
+  when: environment == 'prod'
+  ignore_errors: yes
+
+- name: "{{ service_name }} - Display build result"
+  debug:
+    msg:
+      - "Service: {{ service_name }}"
+      - "Image: {{ docker.registry }}/{{ project_name }}-{{ service_name }}-{{ environment }}:latest"
+      - "Build Status: {{ 'Success' if docker_build_result.changed else 'Cached' }}"
+      - "Image ID: {{ docker_build_result.image.Id }}"
+      - "Size: {{ docker_build_result.image.Size | filesizeformat }}"

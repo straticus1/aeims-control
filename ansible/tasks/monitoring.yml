@@ -1,0 +1,126 @@
+---
+# Monitoring Setup
+# Deploys Prometheus, Grafana, and sets up monitoring
+
+- name: Deploy Prometheus
+  block:
+    - name: Create Prometheus configuration directory
+      file:
+        path: "{{ playbook_dir }}/../monitoring/prometheus"
+        state: directory
+        mode: '0755'
+
+    - name: Generate Prometheus configuration
+      template:
+        src: "{{ playbook_dir }}/templates/prometheus.yml.j2"
+        dest: "{{ playbook_dir }}/../monitoring/prometheus/prometheus.yml"
+        mode: '0644'
+
+    - name: Start Prometheus container
+      docker_container:
+        name: aeims-prometheus
+        image: prom/prometheus:latest
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "9090:9090"
+        networks:
+          - name: aeims-integrated-network
+        volumes:
+          - "{{ playbook_dir }}/../monitoring/prometheus:/etc/prometheus:ro"
+        command:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--storage.tsdb.retention.time=200h'
+          - '--web.enable-lifecycle'
+
+- name: Deploy Grafana
+  block:
+    - name: Create Grafana configuration directory
+      file:
+        path: "{{ playbook_dir }}/../monitoring/grafana"
+        state: directory
+        mode: '0755'
+
+    - name: Generate Grafana datasource configuration
+      template:
+        src: "{{ playbook_dir }}/templates/grafana-datasources.yml.j2"
+        dest: "{{ playbook_dir }}/../monitoring/grafana/datasources.yml"
+        mode: '0644'
+
+    - name: Start Grafana container
+      docker_container:
+        name: aeims-grafana
+        image: grafana/grafana:latest
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "3001:3000"
+        networks:
+          - name: aeims-integrated-network
+        volumes:
+          - "{{ playbook_dir }}/../monitoring/grafana:/etc/grafana/provisioning:ro"
+        env:
+          GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password | default('admin123') }}"
+          GF_USERS_ALLOW_SIGN_UP: "false"
+
+- name: Wait for monitoring services to be ready
+  uri:
+    url: "{{ item.url }}"
+    method: GET
+    status_code: 200
+  register: monitoring_health
+  until: monitoring_health.status == 200
+  retries: 20
+  delay: 5
+  loop:
+    - { name: "Prometheus", url: "http://localhost:9090/-/ready" }
+    - { name: "Grafana", url: "http://localhost:3001/api/health" }
+
+- name: Configure CloudWatch monitoring (cloud)
+  block:
+    - name: Create CloudWatch dashboard
+      cloudwatch_metric_alarm:
+        name: "{{ project_name }}-{{ item.service }}-cpu-{{ environment }}"
+        metric_name: CPUUtilization
+        namespace: AWS/ECS
+        statistic: Average
+        comparison: GreaterThanThreshold
+        threshold: 80.0
+        period: 300
+        evaluation_periods: 2
+        alarm_actions:
+          - "{{ sns_topic_arn | default('') }}"
+        dimensions:
+          ServiceName: "{{ project_name }}-{{ item.service }}-{{ environment }}"
+          ClusterName: "{{ terraform_outputs.ecs_cluster_name }}"
+        state: present
+      loop:
+        - { service: "aeims-core" }
+        - { service: "aeims-app" }
+        - { service: "aeims-lib" }
+      when:
+        - environment in ['staging', 'prod']
+        - terraform_outputs.ecs_cluster_name is defined
+
+- name: Import Grafana dashboards
+  uri:
+    url: "http://localhost:3001/api/dashboards/db"
+    method: POST
+    user: admin
+    password: "{{ grafana_admin_password | default('admin123') }}"
+    force_basic_auth: yes
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      dashboard: "{{ lookup('file', playbook_dir + '/templates/aeims-dashboard.json') | from_json }}"
+      overwrite: true
+    status_code: [200, 412]
+  register: dashboard_import
+
+- name: Log monitoring setup status
+  debug:
+    msg: "Monitoring deployed successfully - Prometheus: {{ monitoring_health.results[0].status }}, Grafana: {{ monitoring_health.results[1].status }}"

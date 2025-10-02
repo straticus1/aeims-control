@@ -1,0 +1,322 @@
+---
+# AEIMS Main Variables
+# Configuration variables for AEIMS deployment
+
+# Project Configuration
+project_name: "aeims"
+environment: "{{ env | default('dev') }}"
+aws_region: "{{ region | default('us-west-2') }}"
+
+# Source Directories
+source_directories:
+  aeims_core: "../aeims"
+  aeims_app: "../aeims.app"  
+  aeims_lib: "../aeimsLib"
+
+# Docker Configuration
+docker:
+  registry: "{{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com"
+  build_args:
+    - "ENVIRONMENT={{ environment }}"
+    - "BUILD_DATE={{ ansible_date_time.iso8601 }}"
+  
+  # Service-specific build contexts
+  services:
+    aeims_core:
+      context: "{{ source_directories.aeims_core }}/telephony-platform"
+      dockerfile: "Dockerfile"
+      ports: [8000]
+    
+    aeims_app:
+      context: "{{ source_directories.aeims_app }}"
+      dockerfile: "infrastructure/Dockerfile"
+      ports: [80, 443]
+    
+    aeims_lib:
+      context: "{{ source_directories.aeims_lib }}"
+      dockerfile: "Dockerfile"
+      ports: [8080]
+    
+    # Microservices from AEIMS core
+    user_service:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/services/user-service"
+      dockerfile: "Dockerfile"
+      ports: [8001]
+    
+    billing_service:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/services/billing-service"
+      dockerfile: "Dockerfile"
+      ports: [8002]
+    
+    call_service:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/services/call-service"
+      dockerfile: "Dockerfile"
+      ports: [8003]
+    
+    operator_service:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/services/operator-service"
+      dockerfile: "Dockerfile"
+      ports: [8004]
+    
+    conference_service:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/services/conference-service"
+      dockerfile: "Dockerfile"
+      ports: [8005]
+    
+    notification_service:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/services/notification-service"
+      dockerfile: "Dockerfile"
+      ports: [8006]
+    
+    analytics_service:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/services/analytics-service"
+      dockerfile: "Dockerfile"
+      ports: [8007]
+    
+    frontend:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/frontend"
+      dockerfile: "Dockerfile"
+      ports: [3000]
+    
+    nginx:
+      context: "{{ source_directories.aeims_core }}/telephony-platform/nginx"
+      dockerfile: "Dockerfile"
+      ports: [80, 443]
+
+# Feature Flags
+feature_flags:
+  enable_aeims_core: true
+  enable_aeims_app: true
+  enable_aeims_lib: true
+  enable_monitoring: true
+  enable_backup: true
+  enable_ssl: false
+  enable_waf: false
+
+# Database Configuration
+databases:
+  aeims_core:
+    engine: "postgres"
+    version: "14.9"
+    port: 5432
+    name: "aeims_core"
+    
+  aeims_app:
+    engine: "mysql"
+    version: "8.0.35"
+    port: 3306
+    name: "aeims_app"
+
+# Redis Configuration
+redis_instances:
+  aeims_core:
+    port: 6379
+    version: "7.0"
+    
+  aeims_app:
+    port: 6379
+    version: "7.0"
+    
+  aeims_lib:
+    port: 6379
+    version: "7.0"
+
+# Service Configurations
+services:
+  aeims_core:
+    cpu: 512
+    memory: 1024
+    replicas: 1
+    health_check: "/health"
+    dependencies:
+      - "postgres"
+      - "redis"
+    
+  aeims_app:
+    cpu: 256
+    memory: 512
+    replicas: 1
+    health_check: "/"
+    dependencies:
+      - "mysql" 
+      - "redis"
+    
+  aeims_lib:
+    cpu: 256
+    memory: 512
+    replicas: 1
+    health_check: "/health"
+    dependencies:
+      - "redis"
+
+# Load Balancer Configuration
+load_balancer:
+  type: "application"
+  scheme: "internet-facing"
+  listeners:
+    - port: 80
+      protocol: "HTTP"
+      redirect_to: 443
+    - port: 443
+      protocol: "HTTPS"
+      ssl_policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+  
+  routing_rules:
+    - path: "/api/*"
+      target: "aeims_core"
+      priority: 100
+    - path: "/telephony/*"
+      target: "aeims_core"
+      priority: 101
+    - path: "/ws/*"
+      target: "aeims_lib"
+      priority: 200
+    - path: "/device/*"
+      target: "aeims_lib"
+      priority: 201
+    - path: "/users/*"
+      target: "user_service"
+      priority: 300
+    - path: "/billing/*"
+      target: "billing_service"
+      priority: 400
+    - path: "/calls/*"
+      target: "call_service"
+      priority: 500
+    - path: "/operators/*"
+      target: "operator_service"
+      priority: 600
+    - path: "/conference/*"
+      target: "conference_service"
+      priority: 700
+    - path: "/notifications/*"
+      target: "notification_service"
+      priority: 800
+    - path: "/analytics/*"
+      target: "analytics_service"
+      priority: 900
+    - path: "/*"
+      target: "aeims_app"
+      priority: 1000
+
+# Monitoring Configuration
+monitoring:
+  prometheus:
+    retention_days: 15
+    storage_size: "20Gi"
+    scrape_interval: "15s"
+    
+  grafana:
+    admin_password: "{{ grafana_admin_password | default('admin123') }}"
+    storage_size: "10Gi"
+    
+  cloudwatch:
+    log_retention_days: 30
+    metrics_enabled: true
+
+# Backup Configuration
+backup:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_days: 7
+  s3_bucket: "{{ project_name }}-backups-{{ environment }}"
+
+# Security Configuration
+security:
+  enable_waf: "{{ feature_flags.enable_waf }}"
+  enable_ssl: "{{ feature_flags.enable_ssl }}"
+  allowed_cidrs:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12" 
+    - "192.168.0.0/16"
+
+# Scaling Configuration
+auto_scaling:
+  enabled: true
+  min_replicas: 1
+  max_replicas: 10
+  cpu_threshold: 70
+  memory_threshold: 80
+  scale_up_cooldown: 300
+  scale_down_cooldown: 300
+
+# Health Check Configuration  
+health_checks:
+  enabled: true
+  interval: 30
+  timeout: 5
+  retries: 3
+  start_period: 60
+  
+# Deployment Strategy
+deployment:
+  strategy: "rolling"
+  max_unavailable: "25%"
+  max_surge: "25%"
+  timeout: 600
+  
+  # Pre-deployment checks
+  pre_deployment_checks:
+    - "terraform_state_valid"
+    - "docker_images_available"
+    - "database_connectivity"
+    - "redis_connectivity"
+    
+  # Post-deployment validations
+  post_deployment_validations:
+    - "service_health_checks"
+    - "load_balancer_targets_healthy"
+    - "integration_tests"
+
+# Environment-specific overrides
+environment_configs:
+  dev:
+    replicas: 1
+    enable_ssl: false
+    enable_waf: false
+    log_level: "debug"
+    
+  staging:
+    replicas: 1
+    enable_ssl: true
+    enable_waf: false
+    log_level: "info"
+    
+  prod:
+    replicas: 2
+    enable_ssl: true
+    enable_waf: true
+    log_level: "warn"
+    multi_az: true
+    backup_retention_days: 30
+
+# Integration Testing
+integration_tests:
+  timeout: 300
+  endpoints:
+    - url: "/api/health"
+      expected_status: 200
+      service: "aeims_core"
+    - url: "/"
+      expected_status: 200
+      service: "aeims_app"
+    - url: "/ws/health"
+      expected_status: 200
+      service: "aeims_lib"
+    - url: "/users/health"
+      expected_status: 200
+      service: "user_service"
+    - url: "/billing/health"
+      expected_status: 200
+      service: "billing_service"
+
+# Notification Configuration
+notifications:
+  slack_webhook: "{{ slack_webhook_url | default('') }}"
+  email_recipients:
+    - "coleman.ryan@gmail.com"
+  
+  events:
+    - "deployment_started"
+    - "deployment_completed"
+    - "deployment_failed"
+    - "health_check_failed"

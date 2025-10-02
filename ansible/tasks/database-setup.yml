@@ -1,0 +1,89 @@
+---
+# Database Setup Tasks
+# Configures databases and runs migrations
+
+- name: Wait for PostgreSQL to be ready (AEIMS Core)
+  wait_for:
+    host: "{{ terraform_outputs.database_endpoints['aeims-core'] | regex_replace(':.*', '') if terraform_outputs.database_endpoints is defined else 'aeims-core-postgres' }}"
+    port: 5432
+    timeout: 300
+    delay: 10
+  when: feature_flags.enable_aeims_core | default(true)
+
+- name: Wait for MySQL to be ready (AEIMS App)
+  wait_for:
+    host: "{{ terraform_outputs.database_endpoints['aeims-app'] | regex_replace(':.*', '') if terraform_outputs.database_endpoints is defined else 'aeims-app-mysql' }}"
+    port: 3306
+    timeout: 300
+    delay: 10
+  when: feature_flags.enable_aeims_app | default(true)
+
+- name: Wait for Redis to be ready
+  wait_for:
+    host: "{{ terraform_outputs.redis_endpoints['aeims-core'] | regex_replace(':.*', '') if terraform_outputs.redis_endpoints is defined else 'aeims-redis' }}"
+    port: 6379
+    timeout: 300
+    delay: 10
+
+- name: Check PostgreSQL connection
+  postgresql_query:
+    db: "{{ aeims_core_db_name | default('aeims_core') }}"
+    login_host: "{{ terraform_outputs.database_endpoints['aeims-core'] | regex_replace(':.*', '') if terraform_outputs.database_endpoints is defined else 'aeims-core-postgres' }}"
+    login_user: "{{ aeims_core_db_user | default('aeims_user') }}"
+    login_password: "{{ aeims_core_db_pass | default('secure_password_123') }}"
+    query: "SELECT 1 as test"
+  register: pg_test
+  when: feature_flags.enable_aeims_core | default(true)
+
+- name: Check MySQL connection
+  mysql_query:
+    db: "{{ aeims_app_db_name | default('aeims_app') }}"
+    login_host: "{{ terraform_outputs.database_endpoints['aeims-app'] | regex_replace(':.*', '') if terraform_outputs.database_endpoints is defined else 'aeims-app-mysql' }}"
+    login_user: "{{ aeims_app_db_user | default('aeims_user') }}"
+    login_password: "{{ aeims_app_db_pass | default('secure_password_123') }}"
+    query: "SELECT 1 as test"
+  register: mysql_test
+  when: feature_flags.enable_aeims_app | default(true)
+
+- name: Run AEIMS Core database migrations
+  uri:
+    url: "{{ aeims_core_url | default('http://aeims-core:8000') }}/admin/migrate"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      action: "migrate"
+      environment: "{{ environment }}"
+    status_code: [200, 201, 202]
+  retries: 3
+  delay: 10
+  when:
+    - feature_flags.enable_aeims_core | default(true)
+    - pg_test is succeeded
+
+- name: Run AEIMS App database migrations
+  uri:
+    url: "{{ aeims_app_url | default('http://aeims-app') }}/admin/migrate"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      action: "migrate"
+      environment: "{{ environment }}"
+    status_code: [200, 201, 202]
+  retries: 3
+  delay: 10
+  when:
+    - feature_flags.enable_aeims_app | default(true)
+    - mysql_test is succeeded
+
+- name: Initialize Redis cache
+  uri:
+    url: "{{ aeims_core_url | default('http://aeims-core:8000') }}/admin/cache/init"
+    method: POST
+    status_code: [200, 201, 202]
+  retries: 3
+  delay: 5
+  when: feature_flags.enable_aeims_core | default(true)

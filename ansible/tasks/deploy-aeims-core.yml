@@ -1,0 +1,63 @@
+---
+# Deploy AEIMS Core Platform
+# Deploys the main telephony platform and microservices
+
+- name: Deploy AEIMS Core service
+  block:
+    - name: Update ECS service (AEIMS Core)
+      ecs_service:
+        name: "{{ project_name }}-aeims-core-{{ environment }}"
+        cluster: "{{ terraform_outputs.ecs_cluster_name }}"
+        task_definition: "{{ project_name }}-aeims-core-{{ environment }}"
+        desired_count: "{{ aeims_core_replicas | default(1) }}"
+        deployment_configuration:
+          maximum_percent: 200
+          minimum_healthy_percent: 50
+        wait: true
+        wait_timeout: 600
+      when: environment in ['staging', 'prod']
+
+    - name: Start AEIMS Core container (dev)
+      docker_container:
+        name: aeims-core
+        image: "aeims-core:latest"
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "8000:8000"
+        networks:
+          - name: aeims-integrated-network
+        env:
+          ENVIRONMENT: "{{ environment }}"
+          DB_HOST: aeims-core-postgres
+          DB_NAME: "{{ aeims_core_db_name | default('aeims_core') }}"
+          DB_USER: "{{ aeims_core_db_user | default('aeims_user') }}"
+          DB_PASS: "{{ aeims_core_db_pass | default('secure_password_123') }}"
+          REDIS_HOST: aeims-redis
+          REDIS_PASSWORD: "{{ redis_password | default('secure_redis_pass') }}"
+      when: environment == 'dev'
+
+- name: Wait for AEIMS Core to be healthy
+  uri:
+    url: "{{ aeims_core_url | default('http://localhost:8000') }}/health"
+    method: GET
+    status_code: 200
+  register: core_health
+  until: core_health.status == 200
+  retries: 30
+  delay: 10
+
+- name: Verify AEIMS Core API endpoints
+  uri:
+    url: "{{ aeims_core_url | default('http://localhost:8000') }}/{{ item }}"
+    method: GET
+    status_code: [200, 401, 403]  # Allow auth-protected endpoints
+  loop:
+    - "health"
+    - "version"
+    - "api/status"
+  register: api_checks
+
+- name: Log AEIMS Core deployment status
+  debug:
+    msg: "AEIMS Core deployed successfully - Health: {{ core_health.status }}"

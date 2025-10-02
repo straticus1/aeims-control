@@ -1,0 +1,124 @@
+# AEIMS Alerting Rules
+groups:
+  - name: aeims-core-alerts
+    rules:
+      - alert: AeimsServiceDown
+        expr: up{job=~"aeims.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AEIMS service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} has been down for more than 1 minute"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.service }}"
+
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.service }}"
+
+      - alert: DatabaseConnectionHigh
+        expr: postgres_connections_active / postgres_connections_max > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection usage high"
+          description: "PostgreSQL connection usage is {{ $value | humanizePercentage }}"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis memory usage is {{ $value | humanizePercentage }}"
+
+      - alert: ContainerCPUHigh
+        expr: rate(container_cpu_usage_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container CPU usage high"
+          description: "Container {{ $labels.name }} CPU usage is {{ $value }}%"
+
+      - alert: ContainerMemoryHigh
+        expr: container_memory_usage_bytes / container_spec_memory_limit_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container memory usage critical"
+          description: "Container {{ $labels.name }} memory usage is {{ $value }}%"
+
+  - name: aeims-infrastructure-alerts
+    rules:
+      - alert: DiskSpaceHigh
+        expr: (node_filesystem_size_bytes - node_filesystem_avail_bytes) / node_filesystem_size_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space usage high"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: NodeDown
+        expr: up{job="node-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node is down"
+          description: "Node {{ $labels.instance }} has been down for more than 1 minute"
+
+      - alert: LoadAverageHigh
+        expr: node_load1 > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Load average high"
+          description: "Load average is {{ $value }} on {{ $labels.instance }}"
+
+  - name: aeims-business-alerts
+    rules:
+      - alert: CallFailureRateHigh
+        expr: rate(aeims_calls_failed_total[5m]) / rate(aeims_calls_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Call failure rate high"
+          description: "Call failure rate is {{ $value | humanizePercentage }}"
+
+      - alert: ActiveCallsHigh
+        expr: aeims_active_calls > 1000
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of active calls"
+          description: "Active calls: {{ $value }}"
+
+      - alert: WebSocketConnectionsLow
+        expr: aeims_websocket_connections < 10
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Low WebSocket connections"
+          description: "WebSocket connections: {{ $value }}"

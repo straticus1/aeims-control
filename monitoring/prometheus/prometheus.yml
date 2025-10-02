@@ -1,0 +1,132 @@
+# Prometheus Configuration for AEIMS Infrastructure
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'aeims'
+    environment: 'dev'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "rules/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # AEIMS Core Platform
+  - job_name: 'aeims-core'
+    static_configs:
+      - targets: ['aeims-core:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'aeims-core'
+
+  # AEIMS App
+  - job_name: 'aeims-app'
+    static_configs:
+      - targets: ['aeims-app:80']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'aeims-app'
+
+  # AEIMS Lib
+  - job_name: 'aeims-lib'
+    static_configs:
+      - targets: ['aeims-lib:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'aeims-lib'
+
+  # Microservices
+  - job_name: 'aeims-microservices'
+    static_configs:
+      - targets:
+          - 'aeims-user-service:8001'
+          - 'aeims-billing-service:8002'
+          - 'aeims-call-service:8003'
+          - 'aeims-operator-service:8004'
+          - 'aeims-conference-service:8005'
+          - 'aeims-notification-service:8006'
+          - 'aeims-analytics-service:8007'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Database monitoring
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: database
+        replacement: 'postgresql'
+
+  - job_name: 'mysql-exporter'
+    static_configs:
+      - targets: ['mysql-exporter:9104']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: database
+        replacement: 'mysql'
+
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: database
+        replacement: 'redis'
+
+  # Node monitoring
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # cAdvisor for container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    metrics_path: '/metrics'
+
+  # Nginx metrics
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['aeims-nginx:9113']
+    metrics_path: '/metrics'
+
+  # Blackbox exporter for endpoint monitoring
+  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - http://aeims-core:8000/health
+        - http://aeims-app:80/
+        - http://aeims-lib:8080/health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

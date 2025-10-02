@@ -1,0 +1,61 @@
+---
+# Container Push Tasks
+# Pushes built containers to ECR repositories
+
+- name: Get ECR login token
+  shell: aws ecr get-login-password --region {{ aws_region }}
+  register: ecr_token
+  changed_when: false
+  no_log: true
+
+- name: Login to ECR
+  docker_login:
+    registry: "{{ ansible_env.AWS_ACCOUNT_ID | default(aws_account_id) }}.dkr.ecr.{{ aws_region }}.amazonaws.com"
+    username: AWS
+    password: "{{ ecr_token.stdout }}"
+  when: environment in ['staging', 'prod']
+
+- name: Tag and push AEIMS Core image
+  docker_image:
+    name: "aeims-core"
+    tag: latest
+    repository: "{{ terraform_outputs.ecr_repository_urls['aeims-core'] | default('aeims-core:latest') }}"
+    push: "{{ environment in ['staging', 'prod'] }}"
+    source: local
+  when: feature_flags.enable_aeims_core | default(true)
+
+- name: Tag and push AEIMS App image
+  docker_image:
+    name: "aeims-app"
+    tag: latest
+    repository: "{{ terraform_outputs.ecr_repository_urls['aeims-app'] | default('aeims-app:latest') }}"
+    push: "{{ environment in ['staging', 'prod'] }}"
+    source: local
+  when: feature_flags.enable_aeims_app | default(true)
+
+- name: Tag and push AEIMS Lib image
+  docker_image:
+    name: "aeims-lib"
+    tag: latest
+    repository: "{{ terraform_outputs.ecr_repository_urls['aeims-lib'] | default('aeims-lib:latest') }}"
+    push: "{{ environment in ['staging', 'prod'] }}"
+    source: local
+  when: feature_flags.enable_aeims_lib | default(true)
+
+- name: Tag and push microservice images
+  docker_image:
+    name: "{{ item.name }}"
+    tag: latest
+    repository: "{{ terraform_outputs.ecr_repository_urls[item.name] | default(item.name + ':latest') }}"
+    push: "{{ environment in ['staging', 'prod'] }}"
+    source: local
+  loop:
+    - { name: "user-service" }
+    - { name: "billing-service" }
+    - { name: "call-service" }
+    - { name: "operator-service" }
+    - { name: "conference-service" }
+    - { name: "notification-service" }
+    - { name: "analytics-service" }
+    - { name: "frontend" }
+  when: environment in ['staging', 'prod']

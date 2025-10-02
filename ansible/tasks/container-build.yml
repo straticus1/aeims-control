@@ -1,0 +1,73 @@
+---
+# Container Build Tasks for AEIMS Services
+# Builds Docker images for all AEIMS components
+
+- name: Create temporary build directory
+  tempfile:
+    state: directory
+    prefix: aeims-build-
+  register: build_dir
+
+- name: Set build directory fact
+  set_fact:
+    aeims_build_dir: "{{ build_dir.path }}"
+
+- name: Get AWS account ID
+  amazon.aws.aws_caller_info:
+    region: "{{ aws_region }}"
+  register: aws_info
+
+- name: Set AWS account ID fact
+  set_fact:
+    aws_account_id: "{{ aws_info.account }}"
+
+- name: Login to ECR
+  shell: |
+    aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+  changed_when: true
+
+- name: Check if source directories exist
+  stat:
+    path: "{{ item.value }}"
+  register: source_dir_check
+  loop: "{{ source_directories | dict2items }}"
+  failed_when: not source_dir_check.stat.exists
+  loop_control:
+    label: "{{ item.key }}: {{ item.value }}"
+
+- name: Build Docker images for each service
+  include_tasks: build-single-service.yml
+  vars:
+    service_name: "{{ item.key }}"
+    service_config: "{{ item.value }}"
+  loop: "{{ docker.services | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Generate Docker Compose override for local development
+  template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ aeims_build_dir }}/docker-compose.override.yml"
+    mode: '0644'
+  when: environment == 'dev'
+
+- name: Validate all images were built successfully
+  docker_image_info:
+    name: "{{ docker.registry }}/{{ project_name }}-{{ item.key }}-{{ environment }}:latest"
+  register: image_info
+  failed_when: image_info.images | length == 0
+  loop: "{{ docker.services | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Display build summary
+  debug:
+    msg:
+      - "====== Container Build Summary ======"
+      - "Build Directory: {{ aeims_build_dir }}"
+      - "Registry: {{ docker.registry }}"
+      - "Images Built:"
+      - "{% for service in docker.services.keys() %}"
+      - "  - {{ docker.registry }}/{{ project_name }}-{{ service }}-{{ environment }}:latest"
+      - "{% endfor %}"
+      - "Build Arguments: {{ docker.build_args }}"

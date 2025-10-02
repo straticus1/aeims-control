@@ -1,0 +1,179 @@
+{
+  "name": "aeims-control",
+  "version": "3.0.0",
+  "description": "AEIMS Infrastructure Management System - Complete platform orchestration",
+  "type": "infrastructure",
+  "framework": "terraform-ansible",
+  "dependencies": {
+    "terraform": ">=1.5.0",
+    "ansible": ">=2.15.0",
+    "docker": ">=20.10.0",
+    "aws-cli": ">=2.0.0"
+  },
+  "environments": {
+    "dev": {
+      "description": "Development environment",
+      "aws_region": "us-west-2",
+      "deployment_type": "docker-compose",
+      "auto_approve": true,
+      "enable_monitoring": true
+    },
+    "staging": {
+      "description": "Staging environment",
+      "aws_region": "us-west-2",
+      "deployment_type": "aws-ecs",
+      "auto_approve": false,
+      "enable_monitoring": true,
+      "enable_ssl": true
+    },
+    "prod": {
+      "description": "Production environment",
+      "aws_region": "us-west-2",
+      "deployment_type": "aws-ecs",
+      "auto_approve": false,
+      "enable_monitoring": true,
+      "enable_ssl": true,
+      "enable_waf": true,
+      "enable_backup": true
+    }
+  },
+  "deployment": {
+    "script": "./deploy.sh",
+    "test_script": "./tests/integration-test.sh",
+    "setup_script": "./setup-aws-infrastructure.sh",
+    "supports_plan": true,
+    "supports_destroy": true,
+    "supports_rollback": true
+  },
+  "services": {
+    "aeims-core": {
+      "type": "api",
+      "port": 8000,
+      "health_check": "/health",
+      "dependencies": ["aeims-core-postgres", "aeims-redis"]
+    },
+    "aeims-app": {
+      "type": "web",
+      "port": 80,
+      "health_check": "/",
+      "dependencies": ["aeims-app-mysql", "aeims-redis"]
+    },
+    "aeims-lib": {
+      "type": "websocket",
+      "port": 8080,
+      "health_check": "/health",
+      "dependencies": ["aeims-redis"]
+    },
+    "aeims-frontend": {
+      "type": "spa",
+      "port": 3000,
+      "health_check": "/",
+      "dependencies": ["aeims-core", "aeims-lib"]
+    },
+    "aeims-nginx": {
+      "type": "load-balancer",
+      "port": 80,
+      "health_check": "/health",
+      "dependencies": ["aeims-core", "aeims-app", "aeims-lib", "aeims-frontend"]
+    }
+  },
+  "infrastructure": {
+    "aws": {
+      "vpc": true,
+      "rds": true,
+      "elasticache": true,
+      "ecs": true,
+      "alb": true,
+      "ecr": true,
+      "s3": true,
+      "cloudwatch": true,
+      "kms": true
+    },
+    "compliance": {
+      "gdpr": true,
+      "pci_dss": true,
+      "sox": true,
+      "fosta": true,
+      "mann_act": true,
+      "federal": true,
+      "florida": true,
+      "ny_shield": true,
+      "take_it_down": true
+    }
+  },
+  "monitoring": {
+    "prometheus": {
+      "enabled": true,
+      "port": 9090
+    },
+    "grafana": {
+      "enabled": true,
+      "port": 3001
+    },
+    "elk_stack": {
+      "enabled": true,
+      "retention_days": 90
+    }
+  },
+  "security": {
+    "waf": true,
+    "ssl_redirect": true,
+    "security_headers": true,
+    "rate_limiting": true,
+    "encryption_at_rest": true,
+    "encryption_in_transit": true
+  },
+  "backup": {
+    "databases": {
+      "retention_days": 30,
+      "cross_region": true
+    },
+    "application_data": {
+      "retention_days": 90,
+      "versioning": true
+    }
+  },
+  "scaling": {
+    "auto_scaling": true,
+    "min_instances": 2,
+    "max_instances": 10,
+    "target_cpu": 70,
+    "target_memory": 80
+  },
+  "tags": {
+    "Project": "AEIMS",
+    "Owner": "AfterDarkSystems",
+    "Environment": "${ENVIRONMENT}",
+    "ManagedBy": "SuperDeploy",
+    "Version": "3.0.0"
+  },
+  "integrations": {
+    "projects": [
+      {
+        "name": "aeims",
+        "path": "../aeims",
+        "type": "telephony-platform"
+      },
+      {
+        "name": "aeims.app",
+        "path": "../aeims.app",
+        "type": "showcase-website"
+      },
+      {
+        "name": "aeimsLib",
+        "path": "../aeimsLib",
+        "type": "device-library"
+      }
+    ]
+  },
+  "notifications": {
+    "slack": {
+      "enabled": false,
+      "webhook_url": ""
+    },
+    "email": {
+      "enabled": true,
+      "recipients": ["coleman.ryan@gmail.com"]
+    }
+  }
+}
