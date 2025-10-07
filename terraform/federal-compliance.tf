@@ -24,15 +24,13 @@ resource "aws_s3_bucket_versioning" "moderation_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "moderation_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "moderation_encryption" {
   bucket = aws_s3_bucket.content_moderation.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.federal_compliance_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.federal_compliance_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -62,7 +60,8 @@ resource "aws_kms_key" "federal_compliance_key" {
             "lambda.amazonaws.com",
             "s3.amazonaws.com",
             "rekognition.amazonaws.com",
-            "textract.amazonaws.com"
+            "textract.amazonaws.com",
+            "logs.amazonaws.com"
           ]
         }
         Action = [
@@ -608,12 +607,14 @@ resource "aws_dynamodb_table" "compliance_records" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "user-index"
     hash_key  = "user_id"
     range_key = "timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "type-timestamp-index"
     hash_key  = "record_type"
     range_key = "timestamp"
@@ -705,7 +706,7 @@ resource "aws_cloudwatch_log_group" "federal_compliance_logs" {
   ])
 
   name              = "/aws/lambda/${var.project_name}-${each.key}-${var.environment}"
-  retention_in_days = 2555 # 7 years for compliance
+  retention_in_days = 2557 # 7 years for compliance
   kms_key_id        = aws_kms_key.federal_compliance_key.arn
 
   tags = {

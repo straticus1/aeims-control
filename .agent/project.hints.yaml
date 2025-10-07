@@ -1,0 +1,6 @@
+project:
+  domain_keywords: ["terraform", "docker", "aws", "ecs", "voip", "aeims"]
+  prefer:
+    language: "terraform"
+    vector: null
+    db: "mysql"

@@ -242,7 +242,7 @@ resource "aws_route53_health_check" "aeims_primary_health" {
   failure_threshold               = "3"
   request_interval                = "30"
   cloudwatch_alarm_region         = var.aws_region
-  insufficient_data_health_status = "Failure"
+  insufficient_data_health_status = "Unhealthy"
 
   tags = {
     Name = "${var.project_name}-primary-health-check-${var.environment}"
@@ -495,7 +495,7 @@ variable "enable_disaster_recovery" {
 variable "dr_region" {
   description = "Disaster recovery region"
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 }
 
 variable "dr_vpc_cidr" {

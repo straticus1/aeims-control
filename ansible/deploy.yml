@@ -46,6 +46,14 @@
         - import_tasks: tasks/infrastructure-prep.yml
       tags: ['infrastructure', 'prep']
 
+    # Ubuntu Instance Provisioning for Regulatory Compliance
+    - name: Ubuntu Instance Provisioning and Software Installation
+      block:
+        - import_tasks: tasks/ubuntu-instance-provisioning.yml
+      vars:
+        autoscaling_group_name: "{{ autoscaling_group_name | default('aeims-asg-production') }}"
+      tags: ['ubuntu', 'provisioning', 'compliance']
+
     # Container Build and Push
     - name: Container Build and Deployment
       block:

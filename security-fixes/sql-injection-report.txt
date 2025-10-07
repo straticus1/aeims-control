@@ -1,0 +1,36 @@
+SQL Injection Vulnerability Report
+==================================
+
+Scan completed on: 2025-10-03 23:21:14
+Vulnerable files found: 20
+
+VULNERABLE FILES:
+- /Users/ryan/development/aeims/telephony-platform/services/billing-service/vendor/doctrine/dbal/src/Platforms/PostgreSQLPlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/billing-service/vendor/doctrine/dbal/src/Platforms/DB2Platform.php
+- /Users/ryan/development/aeims/telephony-platform/services/billing-service/vendor/doctrine/dbal/src/Platforms/OraclePlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/billing-service/vendor/doctrine/dbal/src/Platforms/SQLServerPlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/billing-service/vendor/symfony/phpunit-bridge/bin/simple-phpunit.php
+- /Users/ryan/development/aeims/telephony-platform/services/user-service/vendor/doctrine/dbal/src/Platforms/PostgreSQLPlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/user-service/vendor/doctrine/dbal/src/Platforms/DB2Platform.php
+- /Users/ryan/development/aeims/telephony-platform/services/user-service/vendor/doctrine/dbal/src/Platforms/OraclePlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/user-service/vendor/doctrine/dbal/src/Platforms/SQLServerPlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/user-service/vendor/symfony/phpunit-bridge/bin/simple-phpunit.php
+- /Users/ryan/development/aeims/telephony-platform/services/conference-service/vendor/doctrine/dbal/src/Platforms/PostgreSQLPlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/conference-service/vendor/doctrine/dbal/src/Platforms/DB2Platform.php
+- /Users/ryan/development/aeims/telephony-platform/services/conference-service/vendor/doctrine/dbal/src/Platforms/OraclePlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/conference-service/vendor/doctrine/dbal/src/Platforms/SQLServerPlatform.php
+- /Users/ryan/development/aeims/telephony-platform/services/conference-service/vendor/symfony/phpunit-bridge/bin/simple-phpunit.php
+- /Users/ryan/development/aeims/vendor/doctrine/dbal/src/Platforms/PostgreSQLPlatform.php
+- /Users/ryan/development/aeims/vendor/doctrine/dbal/src/Platforms/DB2Platform.php
+- /Users/ryan/development/aeims/vendor/doctrine/dbal/src/Platforms/OraclePlatform.php
+- /Users/ryan/development/aeims/vendor/doctrine/dbal/src/Platforms/SQLServerPlatform.php
+- /Users/ryan/development/aeimsLib/database.php
+
+RECOMMENDED ACTIONS:
+1. Review each vulnerable file manually
+2. Replace direct SQL concatenation with prepared statements
+3. Use the SecureDatabase helper class for new code
+4. Validate and sanitize all user inputs
+5. Implement input validation at application boundaries
+6. Use parameterized queries exclusively
+7. Test all fixes thoroughly

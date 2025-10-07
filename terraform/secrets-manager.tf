@@ -265,6 +265,7 @@ resource "local_file" "get_secrets_script" {
 # Outputs (ARNs only, not actual secret values)
 output "secret_arns" {
   description = "ARNs of all secrets created"
+  sensitive   = true
   value = {
     database_secrets    = { for k, v in aws_secretsmanager_secret.database_secrets : k => v.arn }
     redis_secrets       = { for k, v in aws_secretsmanager_secret.redis_secrets : k => v.arn }

@@ -25,15 +25,13 @@ resource "aws_s3_bucket_versioning" "fosta_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "fosta_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "fosta_encryption" {
   bucket = aws_s3_bucket.fosta_compliance.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.fosta_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.fosta_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -379,12 +377,14 @@ resource "aws_dynamodb_table" "sex_trafficking_detection_logs" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "timestamp-risk-index"
     hash_key  = "detection_timestamp"
     range_key = "risk_score"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "content-type-index"
     hash_key  = "content_type"
     range_key = "detection_timestamp"
@@ -436,18 +436,21 @@ resource "aws_dynamodb_table" "fosta_violation_reports" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "severity-timestamp-index"
     hash_key  = "severity_level"
     range_key = "report_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "user-timestamp-index"
     hash_key  = "user_id"
     range_key = "report_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "status-timestamp-index"
     hash_key  = "status"
     range_key = "report_timestamp"
@@ -495,12 +498,14 @@ resource "aws_dynamodb_table" "fosta_content_filter_logs" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "action-timestamp-index"
     hash_key  = "filter_action"
     range_key = "filter_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "content-hash-index"
     hash_key  = "content_hash"
     range_key = "filter_timestamp"
@@ -548,12 +553,14 @@ resource "aws_dynamodb_table" "fosta_communication_logs" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "participants-timestamp-index"
     hash_key  = "participants"
     range_key = "monitor_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "risk-timestamp-index"
     hash_key  = "risk_assessment"
     range_key = "monitor_timestamp"
@@ -1131,7 +1138,7 @@ resource "aws_cloudwatch_log_group" "fosta_logs" {
   ])
 
   name              = "/aws/lambda/${var.project_name}-${each.key}-${var.environment}"
-  retention_in_days = 2555 # 7 years for compliance
+  retention_in_days = 2557 # 7 years for compliance
   kms_key_id        = aws_kms_key.fosta_key.arn
 
   tags = {

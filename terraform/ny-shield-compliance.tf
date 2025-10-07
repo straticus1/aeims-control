@@ -24,15 +24,13 @@ resource "aws_s3_bucket_versioning" "breach_response_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "breach_response_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "breach_response_encryption" {
   bucket = aws_s3_bucket.breach_response.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.ny_shield_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.ny_shield_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -706,7 +704,7 @@ resource "aws_cloudwatch_log_group" "ny_shield_logs" {
   ])
 
   name              = "/aws/lambda/${var.project_name}-${each.key}-${var.environment}"
-  retention_in_days = 2555 # 7 years for compliance
+  retention_in_days = 2557 # 7 years for compliance
   kms_key_id        = aws_kms_key.ny_shield_key.arn
 
   tags = {

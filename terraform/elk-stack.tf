@@ -12,8 +12,8 @@ resource "aws_elasticsearch_domain" "aeims_es" {
     instance_type            = var.elasticsearch_instance_type
     instance_count           = var.elasticsearch_instance_count
     dedicated_master_enabled = var.elasticsearch_instance_count > 2
-    master_instance_type     = var.elasticsearch_instance_count > 2 ? var.elasticsearch_master_instance_type : null
-    master_instance_count    = var.elasticsearch_instance_count > 2 ? 3 : null
+    dedicated_master_type    = var.elasticsearch_instance_count > 2 ? var.elasticsearch_master_instance_type : null
+    dedicated_master_count   = var.elasticsearch_instance_count > 2 ? 3 : null
     zone_awareness_enabled   = var.elasticsearch_instance_count > 1
 
     dynamic "zone_awareness_config" {
@@ -306,7 +306,7 @@ resource "aws_efs_file_system" "logstash_config" {
   throughput_mode                 = "provisioned"
   provisioned_throughput_in_mibps = 100
 
-  encrypt    = true
+  encrypted  = true
   kms_key_id = aws_kms_key.aeims_key.arn
 
   tags = {
@@ -427,7 +427,6 @@ resource "aws_service_discovery_service" "logstash" {
     routing_policy = "MULTIVALUE"
   }
 
-  health_check_grace_period_seconds = 30
 
   tags = {
     Name = "${var.project_name}-logstash-discovery-${var.environment}"
@@ -504,7 +503,7 @@ variable "enable_centralized_logging" {
 variable "elasticsearch_version" {
   description = "Elasticsearch version"
   type        = string
-  default     = "7.17"
+  default     = "OpenSearch_2.19"
 }
 
 variable "elasticsearch_instance_type" {

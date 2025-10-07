@@ -109,7 +109,8 @@ variable "log_groups" {
     "analytics-service",
     "frontend",
     "nginx",
-    "system"
+    "system",
+    "logstash"
   ]
 }
 
@@ -138,7 +139,7 @@ variable "database_configs" {
   default = {
     aeims_core = {
       engine                = "postgres"
-      engine_version        = "14.9"
+      engine_version        = "14.19"
       instance_class        = "db.t3.micro"
       allocated_storage     = 20
       max_allocated_storage = 100
@@ -151,7 +152,7 @@ variable "database_configs" {
     }
     aeims_app = {
       engine                = "mysql"
-      engine_version        = "8.0.35"
+      engine_version        = "8.0.43"
       instance_class        = "db.t3.micro"
       allocated_storage     = 20
       max_allocated_storage = 100
@@ -311,15 +312,33 @@ variable "ecs_service_configs" {
 
 # Certificate Configuration
 variable "domain_name" {
-  description = "Domain name for AEIMS deployment"
+  description = "Primary domain name for AEIMS deployment"
   type        = string
   default     = ""
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate ARN for HTTPS"
+  description = "Primary ACM certificate ARN for HTTPS"
   type        = string
   default     = ""
+}
+
+variable "additional_domains" {
+  description = "Additional domains for SSL certificates"
+  type = map(object({
+    domain_name = string
+    sans        = list(string)  # Subject Alternative Names
+  }))
+  default = {
+    nycflirts = {
+      domain_name = "nycflirts.com"
+      sans        = ["www.nycflirts.com"]
+    }
+    flirtsnyc = {
+      domain_name = "flirts.nyc"
+      sans        = ["www.flirts.nyc"]
+    }
+  }
 }
 
 # Monitoring Configuration

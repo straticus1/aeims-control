@@ -10,7 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="aeims"
 DEFAULT_ENVIRONMENT="dev"
-DEFAULT_REGION="us-west-2"
+DEFAULT_REGION="us-east-1"
 
 # Color output
 RED='\033[0;31m'

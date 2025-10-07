@@ -182,15 +182,13 @@ resource "aws_s3_bucket_versioning" "db_migration_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "db_migration_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "db_migration_encryption" {
   bucket = aws_s3_bucket.db_migration_bucket.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.aeims_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.aeims_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }

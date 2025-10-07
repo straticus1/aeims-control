@@ -11,7 +11,8 @@ COPY nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /etc/nginx/ssl
 
 # Copy SSL configuration if available
-COPY ssl/* /etc/nginx/ssl/ 2>/dev/null || true
+RUN mkdir -p /etc/nginx/ssl
+# SSL certificates will be mounted via volume or created at runtime
 
 # Set proper permissions
 RUN chown -R nginx:nginx /etc/nginx/ssl

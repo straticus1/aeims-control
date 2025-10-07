@@ -24,19 +24,19 @@ log() {
 }
 
 success() {
-    log "${GREEN}✓ $1${NC}"
+    log "$${GREEN}✓ $1$${NC}"
 }
 
 error() {
-    log "${RED}✗ $1${NC}"
+    log "$${RED}✗ $1$${NC}"
 }
 
 warning() {
-    log "${YELLOW}⚠ $1${NC}"
+    log "$${YELLOW}⚠ $1$${NC}"
 }
 
 info() {
-    log "${BLUE}ℹ $1${NC}"
+    log "$${BLUE}ℹ $1$${NC}"
 }
 
 # Check AWS CLI
@@ -93,8 +93,8 @@ extract_env_vars() {
 
 # Main function
 main() {
-    local action=${1:-"fetch"}
-    local service=${2:-"all"}
+    local action=$${1:-"fetch"}
+    local service=$${2:-"all"}
 
     info "AEIMS Secrets Manager for $ENVIRONMENT environment"
 
@@ -130,25 +130,23 @@ fetch_secrets() {
     # Create secrets directory
     mkdir -p secrets
 
-    # Define secret mappings
+    # Define secret mappings based on available secrets
     declare -A secret_mappings=(
-        ["database"]="$PROJECT_NAME/$ENVIRONMENT/aeims-core/database"
-        ["app-database"]="$PROJECT_NAME/$ENVIRONMENT/aeims-app/database"
-        ["redis"]="$PROJECT_NAME/$ENVIRONMENT/aeims-core/redis"
-        ["app-redis"]="$PROJECT_NAME/$ENVIRONMENT/aeims-app/redis"
-        ["lib-redis"]="$PROJECT_NAME/$ENVIRONMENT/aeims-lib/redis"
-        ["application"]="$PROJECT_NAME/$ENVIRONMENT/application"
-        ["monitoring"]="$PROJECT_NAME/$ENVIRONMENT/monitoring"
-        ["external"]="$PROJECT_NAME/$ENVIRONMENT/external"
-        ["ssl"]="$PROJECT_NAME/$ENVIRONMENT/ssl"
+        ["database"]="$PROJECT_NAME-$ENVIRONMENT-database-main"
+        ["app-database"]="$PROJECT_NAME-$ENVIRONMENT-database-app"
+        ["redis"]="$PROJECT_NAME-$ENVIRONMENT-redis-main"
+        ["application"]="$PROJECT_NAME-$ENVIRONMENT-application"
+        ["monitoring"]="$PROJECT_NAME-$ENVIRONMENT-monitoring"
+        ["external"]="$PROJECT_NAME-$ENVIRONMENT-external"
+        ["ssl"]="$PROJECT_NAME-$ENVIRONMENT-ssl"
     )
 
     if [[ "$service" == "all" ]]; then
-        for secret_key in "${!secret_mappings[@]}"; do
-            get_secret "${secret_mappings[$secret_key]}" "secrets/$secret_key.json" || true
+        for secret_key in "$${!secret_mappings[@]}"; do
+            get_secret "$${secret_mappings[$secret_key]}" "secrets/$secret_key.json" || true
         done
-    elif [[ -n "${secret_mappings[$service]:-}" ]]; then
-        get_secret "${secret_mappings[$service]}" "secrets/$service.json"
+    elif [[ -n "$${secret_mappings[$service]:-}" ]]; then
+        get_secret "$${secret_mappings[$service]}" "secrets/$service.json"
     else
         error "Unknown service: $service"
         exit 1
@@ -216,11 +214,11 @@ EOF
 
 # List available secrets
 list_secrets() {
-    info "Listing available secrets for $PROJECT_NAME/$ENVIRONMENT"
+    info "Listing available secrets for $PROJECT_NAME-$ENVIRONMENT"
 
     aws secretsmanager list-secrets \
         --region "$AWS_REGION" \
-        --query "SecretList[?starts_with(Name, '$PROJECT_NAME/$ENVIRONMENT/')].{Name:Name,Description:Description}" \
+        --query "SecretList[?starts_with(Name, '$PROJECT_NAME-$ENVIRONMENT-')].{Name:Name,Description:Description}" \
         --output table
 }
 
@@ -228,7 +226,7 @@ list_secrets() {
 test_secrets() {
     info "Testing secret access"
 
-    local test_secret="$PROJECT_NAME/$ENVIRONMENT/application"
+    local test_secret="$PROJECT_NAME-$ENVIRONMENT-application"
 
     if aws secretsmanager describe-secret \
         --secret-id "$test_secret" \
@@ -284,12 +282,17 @@ ENVIRONMENT VARIABLES:
     AWS_PROFILE        AWS profile to use
     AWS_REGION         AWS region (overrides default)
 
+Available Secrets for $PROJECT_NAME-$ENVIRONMENT:
+%{~ for secret_name in secret_names ~}
+    - ${secret_name}
+%{~ endfor ~}
+
 EOF
 }
 
 # Parse arguments and run
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    case "${1:-fetch}" in
+if [[ "$${BASH_SOURCE[0]}" == "$${0}" ]]; then
+    case "$${1:-fetch}" in
         "help"|"-h"|"--help")
             show_help
             ;;

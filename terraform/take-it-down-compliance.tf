@@ -25,15 +25,13 @@ resource "aws_s3_bucket_versioning" "take_it_down_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "take_it_down_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "take_it_down_encryption" {
   bucket = aws_s3_bucket.take_it_down_compliance.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.take_it_down_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.take_it_down_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -63,7 +61,8 @@ resource "aws_kms_key" "take_it_down_key" {
             "lambda.amazonaws.com",
             "s3.amazonaws.com",
             "dynamodb.amazonaws.com",
-            "ses.amazonaws.com"
+            "ses.amazonaws.com",
+            "logs.amazonaws.com"
           ]
         }
         Action = [
@@ -301,6 +300,7 @@ resource "aws_dynamodb_table" "ncii_hash_database" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "hash-type-index"
     hash_key  = "hash_type"
     range_key = "created_timestamp"
@@ -347,12 +347,14 @@ resource "aws_dynamodb_table" "takedown_requests" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "status-timestamp-index"
     hash_key  = "status"
     range_key = "submitted_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name     = "content-hash-index"
     hash_key = "content_hash"
   }
@@ -394,6 +396,7 @@ resource "aws_dynamodb_table" "ncii_detection_logs" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "result-timestamp-index"
     hash_key  = "detection_result"
     range_key = "detection_timestamp"
@@ -828,7 +831,7 @@ resource "aws_cloudwatch_log_group" "take_it_down_logs" {
   ])
 
   name              = "/aws/lambda/${var.project_name}-${each.key}-${var.environment}"
-  retention_in_days = 2555 # 7 years for compliance
+  retention_in_days = 2557 # 7 years for compliance
   kms_key_id        = aws_kms_key.take_it_down_key.arn
 
   tags = {

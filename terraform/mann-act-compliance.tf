@@ -25,15 +25,13 @@ resource "aws_s3_bucket_versioning" "mann_act_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "mann_act_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "mann_act_encryption" {
   bucket = aws_s3_bucket.mann_act_compliance.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.mann_act_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.mann_act_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -309,12 +307,14 @@ resource "aws_dynamodb_table" "anti_trafficking_logs" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "risk-level-index"
     hash_key  = "risk_level"
     range_key = "analysis_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "user-timestamp-index"
     hash_key  = "user_id"
     range_key = "analysis_timestamp"
@@ -362,12 +362,14 @@ resource "aws_dynamodb_table" "interstate_activity_tracking" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "origin-state-index"
     hash_key  = "origin_state"
     range_key = "activity_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "destination-state-index"
     hash_key  = "destination_state"
     range_key = "activity_timestamp"
@@ -414,12 +416,14 @@ resource "aws_dynamodb_table" "suspicious_activity_reports" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "severity-timestamp-index"
     hash_key  = "severity_level"
     range_key = "report_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "user-timestamp-index"
     hash_key  = "reported_user_id"
     range_key = "report_timestamp"
@@ -857,7 +861,7 @@ resource "aws_cloudwatch_log_group" "mann_act_logs" {
   ])
 
   name              = "/aws/lambda/${var.project_name}-${each.key}-${var.environment}"
-  retention_in_days = 2555 # 7 years for compliance
+  retention_in_days = 2557 # 7 years for compliance
   kms_key_id        = aws_kms_key.mann_act_key.arn
 
   tags = {

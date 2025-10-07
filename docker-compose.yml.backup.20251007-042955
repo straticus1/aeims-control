@@ -1,0 +1,168 @@
+version: '3.8'
+
+# AEIMS CORRECTED DOCKER COMPOSE CONFIGURATION
+# This fixes the service startup order and dependency issues
+
+services:
+  # 1. INFRASTRUCTURE SERVICES (Start First)
+  redis:
+    image: redis:latest
+    container_name: aeims-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - aeims-network
+
+  postgres:
+    image: postgres:14
+    container_name: aeims-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aeims_core
+      POSTGRES_USER: aeims_user
+      POSTGRES_PASSWORD: secure_password_123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aeims_user -d aeims_core"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aeims-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: aeims-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: aeims_app
+      MYSQL_USER: aeims_user
+      MYSQL_PASSWORD: secure_password_123
+      MYSQL_ROOT_PASSWORD: secure_root_pass_123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aeims-network
+
+  # 2. AEIMS-LIB (Device Control Service) - Depends on Redis
+  aeims-lib:
+    build:
+      context: ../aeimsLib
+      dockerfile: Dockerfile
+    container_name: aeims-lib-service
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # WebSocket and Device Control
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NODE_ENV=production
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - aeims-network
+    volumes:
+      - ./logs:/app/logs
+
+  # 3. AEIMS CORE (PHP Application) - Depends on aeimsLib, Redis, Postgres
+  aeims-core:
+    build:
+      context: ../aeims
+      dockerfile: Dockerfile
+    container_name: aeims-core-service
+    restart: unless-stopped
+    ports:
+      - "3000:80"  # Main application port (expected by ALB)
+    environment:
+      - AEIMS_LIB_URL=http://aeims-lib:8080
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=aeims_core
+      - DATABASE_USER=aeims_user
+      - DATABASE_PASS=secure_password_123
+      - ENVIRONMENT=production
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      aeims-lib:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - aeims-network
+    volumes:
+      - ./logs:/var/www/html/logs
+      - aeims_data:/var/www/html/data
+
+  # 4. NGINX REVERSE PROXY (Load Balancer)
+  nginx:
+    image: nginx:alpine
+    container_name: aeims-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - aeims-core
+      - aeims-lib
+    networks:
+      - aeims-network
+
+networks:
+  aeims-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  mysql_data:
+    driver: local
+  aeims_data:
+    driver: local
+
+# DEPLOYMENT COMMAND:
+# docker compose -f /tmp/aeims-control-docker-compose-fixed.yml up -d
+
+# This configuration addresses:
+# 1. ✅ Proper service startup order with depends_on and health checks
+# 2. ✅ Redis available before aeimsLib starts
+# 3. ✅ All dependencies ready before AEIMS Core starts
+# 4. ✅ Port 3000 serves AEIMS Core (matching ALB expectations)
+# 5. ✅ Network isolation with shared network
+# 6. ✅ Persistent data volumes
+# 7. ✅ Health checks for all services

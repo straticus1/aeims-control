@@ -90,15 +90,13 @@ resource "aws_s3_bucket_versioning" "deployment_artifacts_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "deployment_artifacts_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "deployment_artifacts_encryption" {
   bucket = aws_s3_bucket.deployment_artifacts.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.aeims_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.aeims_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -160,8 +158,14 @@ resource "aws_sfn_state_machine" "superdeploy_workflow" {
       }
       RunDatabaseMigrations = {
         Type     = "Task"
-        Resource = aws_sfn_state_machine.db_migration_workflow.arn
-        Next     = "DeployServices"
+        Resource = "arn:aws:states:::states:startExecution.sync:2"
+        Parameters = {
+          StateMachineArn = aws_sfn_state_machine.db_migration_workflow.arn
+          Input = {
+            "deployment_config.$" = "$.deployment_config"
+          }
+        }
+        Next = "DeployServices"
         Catch = [
           {
             ErrorEquals = ["States.ALL"]
@@ -218,7 +222,7 @@ resource "aws_sfn_state_machine" "superdeploy_workflow" {
             }
           }
         ]
-        Next = "ValidateDeployment"
+        Next = "ValidateServices"
         Catch = [
           {
             ErrorEquals = ["States.ALL"]
@@ -654,6 +658,7 @@ resource "aws_dynamodb_table" "deployment_state" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "status-timestamp-index"
     hash_key  = "status"
     range_key = "timestamp"

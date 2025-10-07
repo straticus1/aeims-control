@@ -24,15 +24,13 @@ resource "aws_s3_bucket_versioning" "florida_compliance_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "florida_compliance_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "florida_compliance_encryption" {
   bucket = aws_s3_bucket.florida_compliance.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.florida_compliance_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.florida_compliance_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -288,12 +286,14 @@ resource "aws_dynamodb_table" "florida_age_verification" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "verification-method-index"
     hash_key  = "verification_method"
     range_key = "verification_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "ip-address-index"
     hash_key  = "ip_address"
     range_key = "verification_timestamp"
@@ -341,12 +341,14 @@ resource "aws_dynamodb_table" "florida_geolocation_logs" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "ip-timestamp-index"
     hash_key  = "ip_address"
     range_key = "timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "state-timestamp-index"
     hash_key  = "state"
     range_key = "timestamp"
@@ -394,12 +396,14 @@ resource "aws_dynamodb_table" "florida_obscenity_logs" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "result-timestamp-index"
     hash_key  = "filter_result"
     range_key = "filter_timestamp"
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "location-timestamp-index"
     hash_key  = "user_location"
     range_key = "filter_timestamp"
@@ -795,7 +799,7 @@ resource "aws_cloudwatch_log_group" "florida_compliance_logs" {
   ])
 
   name              = "/aws/lambda/${var.project_name}-${each.key}-${var.environment}"
-  retention_in_days = 2555 # 7 years for compliance
+  retention_in_days = 2557 # 7 years for compliance
   kms_key_id        = aws_kms_key.florida_compliance_key.arn
 
   tags = {

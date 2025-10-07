@@ -24,15 +24,13 @@ resource "aws_s3_bucket_versioning" "audit_versioning" {
   }
 }
 
-resource "aws_s3_bucket_encryption" "audit_encryption" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "audit_encryption" {
   bucket = aws_s3_bucket.audit_logs.id
 
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        kms_master_key_id = aws_kms_key.gdpr_key.arn
-        sse_algorithm     = "aws:kms"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.gdpr_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -43,6 +41,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "audit_lifecycle" {
   rule {
     id     = "audit_log_lifecycle"
     status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
 
     transition {
       days          = 90
@@ -132,11 +134,6 @@ resource "aws_cloudtrail" "gdpr_audit_trail" {
     data_resource {
       type   = "AWS::S3::Object"
       values = ["${aws_s3_bucket.aeims_assets.arn}/*"]
-    }
-
-    data_resource {
-      type   = "AWS::SecretsManager::Secret"
-      values = ["*"]
     }
   }
 
@@ -530,6 +527,7 @@ resource "aws_dynamodb_table" "consent_management" {
   }
 
   global_secondary_index {
+    projection_type = "ALL"
     name      = "timestamp-index"
     hash_key  = "consent_type"
     range_key = "timestamp"
@@ -558,7 +556,7 @@ resource "aws_cloudwatch_log_group" "gdpr_logs" {
   ])
 
   name              = "/aws/lambda/${var.project_name}-${each.key}-${var.environment}"
-  retention_in_days = 2555 # 7 years
+  retention_in_days = 2557 # 7 years
   kms_key_id        = aws_kms_key.gdpr_key.arn
 
   tags = {

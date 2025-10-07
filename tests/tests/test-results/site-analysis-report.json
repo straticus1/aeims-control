@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2025-10-03T16:03:52.547Z",
+  "totalSitesTested": 0,
+  "summary": {
+    "averageLoadTime": null,
+    "sitesWithErrors": 0,
+    "sitesWithAccessibilityIssues": 0,
+    "sitesWithForms": 0,
+    "sitesWithLoginForms": 0,
+    "httpStatusCodes": {}
+  },
+  "details": []
+}

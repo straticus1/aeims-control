@@ -1,0 +1,275 @@
+version: '3.8'
+
+services:
+  # Redis Cache & Session Store
+  redis:
+    image: redis:7-alpine
+    container_name: aeims-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-aeimsredis2024}
+    networks:
+      - aeims-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL Primary Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: aeims-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aeims}
+      POSTGRES_USER: ${POSTGRES_USER:-aeims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aeims2024}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - aeims-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aeims}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MySQL Legacy Database Support
+  mysql:
+    image: mysql:8.0
+    container_name: aeims-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root2024}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-aeims_legacy}
+      MYSQL_USER: ${MYSQL_USER:-aeims}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-aeims2024}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/mysql-init:/docker-entrypoint-initdb.d
+    networks:
+      - aeims-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AEIMS Library (Device Control & WebSocket Server)
+  aeims-lib:
+    image: 515966511618.dkr.ecr.us-east-1.amazonaws.com/aeims-lib:latest
+    container_name: aeims-lib
+    restart: unless-stopped
+    ports:
+      - "3000:8080"  # Host port 3000 maps to container port 8080
+    environment:
+      - NODE_ENV=production
+      - WEBSOCKET_PORT=8080
+      - LOG_LEVEL=info
+      - AEIMS_ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-aeimsredis2024}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-aeims}:${POSTGRES_PASSWORD:-aeims2024}@postgres:5432/${POSTGRES_DB:-aeims}
+      - MYSQL_HOST=mysql
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-aeims_legacy}
+      - MYSQL_USER=${MYSQL_USER:-aeims}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aeims2024}
+    volumes:
+      - aeims_logs:/app/logs
+    networks:
+      - aeims-network
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AEIMS Core API Server
+  aeims-core:
+    image: 515966511618.dkr.ecr.us-east-1.amazonaws.com/aeims-core:latest
+    container_name: aeims-core
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=production
+      - PORT=8000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-aeims}:${POSTGRES_PASSWORD:-aeims2024}@postgres:5432/${POSTGRES_DB:-aeims}
+      - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-aeimsredis2024}
+      - JWT_SECRET=${JWT_SECRET:-aeims-jwt-secret-2024}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-aeims-encryption-key-2024}
+      - WEBSOCKET_SERVER=ws://aeims-lib:8080
+    volumes:
+      - aeims_uploads:/app/uploads
+      - aeims_logs:/app/logs
+    networks:
+      - aeims-network
+    depends_on:
+      aeims-lib:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AEIMS Admin Interface
+  aeims-admin:
+    image: 515966511618.dkr.ecr.us-east-1.amazonaws.com/aeims-admin:latest
+    container_name: aeims-admin
+    restart: unless-stopped
+    ports:
+      - "8001:80"
+    environment:
+      - PHP_ENV=production
+      - API_BASE_URL=http://aeims-core:8000
+      - DATABASE_HOST=mysql
+      - DATABASE_NAME=${MYSQL_DATABASE:-aeims_legacy}
+      - DATABASE_USER=${MYSQL_USER:-aeims}
+      - DATABASE_PASSWORD=${MYSQL_PASSWORD:-aeims2024}
+      - SESSION_DRIVER=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-aeimsredis2024}
+    volumes:
+      - aeims_admin_storage:/var/www/html/storage
+      - aeims_logs:/var/www/html/logs
+    networks:
+      - aeims-network
+    depends_on:
+      aeims-core:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health.php"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # AEIMS React Frontend Application
+  aeims-app:
+    image: 515966511618.dkr.ecr.us-east-1.amazonaws.com/aeims-app:latest
+    container_name: aeims-app
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
+      - REACT_APP_API_URL=http://aeims-core:8000
+      - REACT_APP_WS_URL=ws://aeims-lib:8080
+      - REACT_APP_ADMIN_URL=http://aeims-admin:80
+      - GENERATE_SOURCEMAP=false
+    volumes:
+      - aeims_app_logs:/app/logs
+    networks:
+      - aeims-network
+    depends_on:
+      aeims-core:
+        condition: service_healthy
+      aeims-lib:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy & Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: aeims-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "8080:8080"  # ALB health check port
+      - "443:443"
+    volumes:
+      - ./nginx/nginx-full-stack.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - aeims-network
+    depends_on:
+      - aeims-lib
+      - aeims-core
+      - aeims-admin
+      - aeims-app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Monitoring & Health Check Service
+  health-monitor:
+    image: alpine/curl:latest
+    container_name: aeims-health-monitor
+    restart: unless-stopped
+    command: |
+      sh -c '
+        while true; do
+          echo "=== AEIMS Health Check $(date) ==="
+          curl -f http://nginx:8080/health || echo "❌ Nginx health failed"
+          curl -f http://aeims-lib:8080/health || echo "❌ AeimsLib health failed"
+          curl -f http://aeims-core:8000/health || echo "❌ AeimsCore health failed"
+          curl -f http://aeims-admin:80/health.php || echo "❌ AeimsAdmin health failed"
+          curl -f http://aeims-app:3000/ || echo "❌ AeimsApp health failed"
+          echo "=== Health Check Complete ==="
+          sleep 60
+        done
+      '
+    networks:
+      - aeims-network
+    depends_on:
+      - nginx
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  mysql_data:
+    driver: local
+  aeims_logs:
+    driver: local
+  aeims_uploads:
+    driver: local
+  aeims_admin_storage:
+    driver: local
+  aeims_app_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  aeims-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

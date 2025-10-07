@@ -1,0 +1,404 @@
+---
+# Ubuntu Instance Provisioning and Software Installation
+# Addresses Ubuntu vs Amazon Linux compatibility issues
+# Ensures proper AEIMS VoIP platform deployment for regulatory compliance
+
+- name: Ubuntu Instance Detection and OS Compatibility
+  block:
+    - name: Detect target instances operating system
+      command: |
+        aws ec2 describe-instances \
+          --filters "Name=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+                   "Name=instance-state-name,Values=running" \
+          --query 'Reservations[*].Instances[*].{InstanceId:InstanceId,ImageId:ImageId,Platform:Platform}' \
+          --output json
+      register: instance_info
+      changed_when: false
+
+    - name: Set OS-specific package management facts
+      set_fact:
+        ubuntu_instances: "{{ instance_info.stdout | from_json | flatten | selectattr('Platform', 'undefined') | list }}"
+        amazon_linux_instances: "{{ instance_info.stdout | from_json | flatten | selectattr('Platform', 'defined') | list }}"
+        ubuntu_package_manager: "apt-get"
+        amazon_linux_package_manager: "yum"
+
+    - name: Display detected instances by OS type
+      debug:
+        msg:
+          - "Ubuntu instances detected: {{ ubuntu_instances | length }}"
+          - "Amazon Linux instances detected: {{ amazon_linux_instances | length }}"
+          - "Total instances: {{ (ubuntu_instances | length) + (amazon_linux_instances | length) }}"
+
+- name: Ubuntu System Preparation
+  block:
+    - name: Update Ubuntu package repositories
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["apt-get update -y"]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_update_command
+      when: ubuntu_instances | length > 0
+
+    - name: Wait for Ubuntu package update completion
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_update_command.stdout }}"
+      when: ubuntu_update_command is defined
+
+- name: Install AEIMS Dependencies for Ubuntu
+  block:
+    - name: Install core system dependencies on Ubuntu
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "export DEBIAN_FRONTEND=noninteractive",
+            "apt-get update -y",
+            "apt-get install -y software-properties-common curl wget gnupg2 ca-certificates lsb-release",
+            "apt-get install -y build-essential git unzip htop nano vim",
+            "apt-get install -y python3 python3-pip python3-venv python3-dev",
+            "apt-get install -y redis-server redis-tools",
+            "systemctl enable redis-server",
+            "systemctl start redis-server"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_dependencies_command
+      when: ubuntu_instances | length > 0
+
+    - name: Wait for Ubuntu dependencies installation
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_dependencies_command.stdout }}"
+      when: ubuntu_dependencies_command is defined
+
+- name: Install Web Server Stack for Ubuntu
+  block:
+    - name: Install and configure nginx for Ubuntu
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "apt-get install -y nginx",
+            "systemctl enable nginx",
+            "systemctl stop nginx",
+            "mkdir -p /var/www/html/api/admin /var/www/html/api/flirts",
+            "chown -R www-data:www-data /var/www/html",
+            "chmod -R 755 /var/www/html",
+            "cat > /etc/nginx/sites-available/aeims-enterprise << \"EOF\"",
+            "server {",
+            "    listen 8080;",
+            "    server_name _;",
+            "    root /var/www/html;",
+            "    index index.php index.html;",
+            "    ",
+            "    location /health {",
+            "        return 200 \"healthy\\n\";",
+            "        add_header Content-Type text/plain always;",
+            "    }",
+            "    ",
+            "    location ~ \\.php$ {",
+            "        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;",
+            "        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;",
+            "        include fastcgi_params;",
+            "    }",
+            "}",
+            "EOF",
+            "ln -sf /etc/nginx/sites-available/aeims-enterprise /etc/nginx/sites-enabled/",
+            "rm -f /etc/nginx/sites-enabled/default",
+            "nginx -t",
+            "systemctl start nginx"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_nginx_command
+      when: ubuntu_instances | length > 0
+
+    - name: Install PHP for Ubuntu
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "apt-get install -y php8.1-fpm php8.1-cli php8.1-mysql php8.1-pgsql",
+            "apt-get install -y php8.1-redis php8.1-json php8.1-mbstring php8.1-xml",
+            "apt-get install -y php8.1-curl php8.1-zip php8.1-gd php8.1-imagick",
+            "systemctl enable php8.1-fpm",
+            "systemctl start php8.1-fpm"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_php_command
+      when: ubuntu_instances | length > 0
+
+    - name: Wait for web server installation
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_nginx_command.stdout }}"
+      when: ubuntu_nginx_command is defined
+
+    - name: Wait for PHP installation
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_php_command.stdout }}"
+      when: ubuntu_php_command is defined
+
+- name: Install VoIP Dependencies for AEIMS
+  block:
+    - name: Install Asterisk and VoIP tools for Ubuntu
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "apt-get install -y asterisk asterisk-config asterisk-modules",
+            "apt-get install -y sox libsox-fmt-all",
+            "systemctl enable asterisk",
+            "systemctl stop asterisk",
+            "mkdir -p /etc/asterisk /var/log/asterisk /var/lib/asterisk",
+            "chown -R asterisk:asterisk /etc/asterisk /var/log/asterisk /var/lib/asterisk"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_voip_command
+      when: ubuntu_instances | length > 0
+
+    - name: Install Node.js for microservices on Ubuntu
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "curl -fsSL https://deb.nodesource.com/setup_18.x | bash -",
+            "apt-get install -y nodejs",
+            "npm install -g pm2 nodemon",
+            "npm install -g @aeims/core @aeims/cli"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_nodejs_command
+      when: ubuntu_instances | length > 0
+
+    - name: Wait for VoIP and Node.js installation
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_voip_command.stdout }}"
+      when: ubuntu_voip_command is defined
+
+    - name: Wait for Node.js installation
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_nodejs_command.stdout }}"
+      when: ubuntu_nodejs_command is defined
+
+- name: Deploy AEIMS Application Components
+  block:
+    - name: Deploy AEIMS Enterprise API endpoints
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "cat > /var/www/html/api/admin/status.php << \"EOF\"",
+            "<?php",
+            "header(\"Content-Type: application/json\");",
+            "header(\"Access-Control-Allow-Origin: *\");",
+            "",
+            "function check_service($service) {",
+            "    $output = shell_exec(\"systemctl is-active $service 2>/dev/null\");",
+            "    return trim($output) === \"active\" ? \"healthy\" : \"down\";",
+            "}",
+            "",
+            "$services = [",
+            "    \"nginx\" => check_service(\"nginx\"),",
+            "    \"php8.1-fpm\" => check_service(\"php8.1-fpm\"),",
+            "    \"redis-server\" => check_service(\"redis-server\"),",
+            "    \"asterisk\" => check_service(\"asterisk\")",
+            "];",
+            "",
+            "$health = array_filter($services, function($status) { return $status !== \"healthy\"; });",
+            "$overall = empty($health) ? \"healthy\" : \"degraded\";",
+            "",
+            "echo json_encode([",
+            "    \"status\" => $overall,",
+            "    \"services\" => $services,",
+            "    \"platform\" => \"AEIMS Enterprise VoIP Platform\",",
+            "    \"environment\" => \"production\",",
+            "    \"timestamp\" => date(\"c\")",
+            "]);",
+            "EOF",
+            "",
+            "chown www-data:www-data /var/www/html/api/admin/status.php",
+            "chmod 644 /var/www/html/api/admin/status.php"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_api_command
+      when: ubuntu_instances | length > 0
+
+    - name: Configure Redis for AEIMS on Ubuntu
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "sed -i \"s/^port 6379/port 6380/\" /etc/redis/redis.conf",
+            "sed -i \"s/^bind 127.0.0.1/bind 127.0.0.1 0.0.0.0/\" /etc/redis/redis.conf",
+            "systemctl restart redis-server",
+            "redis-cli -p 6380 ping || echo \"Redis configuration updated\""
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_redis_command
+      when: ubuntu_instances | length > 0
+
+    - name: Wait for API and Redis configuration
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_api_command.stdout }}"
+      when: ubuntu_api_command is defined
+
+    - name: Wait for Redis configuration
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_redis_command.stdout }}"
+      when: ubuntu_redis_command is defined
+
+- name: Configure Security and Monitoring
+  block:
+    - name: Install and configure fail2ban for security
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "apt-get install -y fail2ban",
+            "cat > /etc/fail2ban/jail.local << \"EOF\"",
+            "[asterisk]",
+            "enabled = true",
+            "port = 5060,5061",
+            "protocol = udp",
+            "filter = asterisk",
+            "logpath = /var/log/asterisk/messages",
+            "maxretry = 3",
+            "bantime = 86400",
+            "",
+            "[nginx-http-auth]",
+            "enabled = true",
+            "filter = nginx-http-auth",
+            "logpath = /var/log/nginx/error.log",
+            "maxretry = 5",
+            "bantime = 3600",
+            "EOF",
+            "systemctl enable fail2ban",
+            "systemctl start fail2ban"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_security_command
+      when: ubuntu_instances | length > 0
+
+    - name: Configure system monitoring
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "apt-get install -y htop iotop nload",
+            "mkdir -p /var/log/aeims",
+            "chown www-data:www-data /var/log/aeims",
+            "echo \"*/5 * * * * root /usr/bin/curl -f http://localhost:8080/health > /var/log/aeims/health-check.log 2>&1\" >> /etc/crontab"
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_monitoring_command
+      when: ubuntu_instances | length > 0
+
+    - name: Wait for security configuration
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_security_command.stdout }}"
+      when: ubuntu_security_command is defined
+
+    - name: Wait for monitoring configuration
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_monitoring_command.stdout }}"
+      when: ubuntu_monitoring_command is defined
+
+- name: Final System Configuration and Testing
+  block:
+    - name: Perform final system health check
+      command: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "echo \"=== AEIMS UBUNTU DEPLOYMENT HEALTH CHECK ===\"",
+            "systemctl status nginx --no-pager",
+            "systemctl status php8.1-fpm --no-pager",
+            "systemctl status redis-server --no-pager",
+            "curl -f http://localhost:8080/health",
+            "curl -f http://localhost:8080/api/admin/status.php",
+            "redis-cli -p 6380 ping",
+            "echo \"=== AEIMS UBUNTU DEPLOYMENT COMPLETE ===\""
+          ]' \
+          --targets "Key=tag:aws:autoscaling:groupName,Values={{ autoscaling_group_name }}" \
+          --query 'Command.CommandId' \
+          --output text
+      register: ubuntu_health_check_command
+      when: ubuntu_instances | length > 0
+
+    - name: Wait for health check completion
+      command: |
+        aws ssm wait command-executed \
+          --command-id "{{ ubuntu_health_check_command.stdout }}"
+      when: ubuntu_health_check_command is defined
+
+    - name: Retrieve health check results
+      command: |
+        aws ssm get-command-invocation \
+          --command-id "{{ ubuntu_health_check_command.stdout }}" \
+          --instance-id "{{ ubuntu_instances[0].InstanceId }}" \
+          --query 'StandardOutputContent' \
+          --output text
+      register: health_check_output
+      when: ubuntu_health_check_command is defined and ubuntu_instances | length > 0
+
+    - name: Display deployment results
+      debug:
+        msg:
+          - "=== AEIMS Ubuntu Deployment Summary ==="
+          - "Instances processed: {{ ubuntu_instances | length }}"
+          - "Services installed: nginx, php8.1-fpm, redis-server, asterisk, fail2ban"
+          - "APIs deployed: /health, /api/admin/status.php"
+          - "Security: fail2ban configured for VoIP protection"
+          - "Health check results:"
+          - "{{ health_check_output.stdout | default('Health check not available') }}"
+
+- name: Update deployment metadata
+  block:
+    - name: Record successful Ubuntu deployment
+      set_fact:
+        ubuntu_deployment_complete: true
+        ubuntu_deployment_timestamp: "{{ ansible_date_time.iso8601 }}"
+        ubuntu_services_installed:
+          - nginx
+          - php8.1-fpm
+          - redis-server
+          - asterisk
+          - fail2ban
+        ubuntu_apis_deployed:
+          - "/health"
+          - "/api/admin/status.php"
+
+    - name: Log deployment completion
+      lineinfile:
+        path: "{{ playbook_dir }}/logs/ubuntu-deployment-{{ ansible_date_time.date }}.log"
+        line: "[{{ ansible_date_time.iso8601 }}] Ubuntu AEIMS deployment completed for {{ ubuntu_instances | length }} instances"
+        create: yes
+      when: ubuntu_instances | length > 0

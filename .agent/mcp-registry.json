@@ -1,0 +1,32 @@
+{
+  "$schema": "https://example.com/mcp-registry.schema.json",
+  "servers": {
+    "fs": {
+      "enabled": true,
+      "scope": "./"
+    },
+    "git": {
+      "enabled": true,
+      "repo": "."
+    },
+    "process": {
+      "enabled": true,
+      "cwd": "."
+    },
+    "http": {
+      "enabled": true
+    },
+    "terraform": {
+      "enabled": true,
+      "workdir": "terraform/"
+    },
+    "docker": {
+      "enabled": true
+    },
+    "aws": {
+      "enabled": true,
+      "profile": "${AWS_PROFILE}",
+      "region": "us-east-1"
+    }
+  }
+}

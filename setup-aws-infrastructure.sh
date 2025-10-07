@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Configuration
 ENVIRONMENT=${1:-dev}
-REGION=${2:-us-west-2}
+REGION=${2:-us-east-1}
 PROJECT_NAME="aeims"
 
 # Color output

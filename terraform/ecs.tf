@@ -47,7 +47,7 @@ resource "aws_ecs_cluster_capacity_providers" "aeims_cluster_capacity" {
 resource "aws_db_instance" "aeims_databases" {
   for_each = var.database_configs
 
-  identifier = "${var.project_name}-${each.key}-${var.environment}"
+  identifier = "${var.project_name}-${replace(each.key, "_", "-")}-${var.environment}"
 
   engine                = each.value.engine
   engine_version        = each.value.engine_version
@@ -94,7 +94,7 @@ resource "random_password" "db_passwords" {
 resource "aws_elasticache_cluster" "aeims_redis" {
   for_each = var.elasticache_configs
 
-  cluster_id           = "${var.project_name}-${each.key}-${var.environment}"
+  cluster_id           = "${var.project_name}-${replace(each.key, "_", "-")}-${var.environment}"
   engine               = "redis"
   node_type            = each.value.node_type
   num_cache_nodes      = each.value.num_cache_nodes
@@ -114,11 +114,13 @@ resource "aws_elasticache_cluster" "aeims_redis" {
 
 # Store database connection strings in Systems Manager
 resource "aws_ssm_parameter" "database_urls" {
-  for_each = aws_db_instance.aeims_databases
+  for_each = var.database_configs
 
   name  = "/aeims/${var.environment}/${each.key}/database_url"
   type  = "SecureString"
-  value = "${each.value.engine}://${each.value.username}:${each.value.password}@${each.value.endpoint}/${each.value.db_name}"
+  value = "${each.value.engine}://admin:${random_password.db_passwords[each.key].result}@${aws_db_instance.aeims_databases[each.key].endpoint}/${var.project_name}_${replace(each.key, "-", "_")}"
+
+  depends_on = [aws_db_instance.aeims_databases]
 
   tags = {
     Name        = "${var.project_name}-${each.key}-db-url-${var.environment}"
@@ -157,7 +159,7 @@ resource "aws_ecs_task_definition" "aeims_services" {
   container_definitions = jsonencode([
     {
       name  = each.key
-      image = "${aws_ecr_repository.aeims_repositories[each.key].repository_url}:latest"
+      image = "${aws_ecr_repository.aeims_repositories[replace(each.key, "_", "-")].repository_url}:latest"
 
       portMappings = [
         {
@@ -252,7 +254,7 @@ resource "aws_ecs_task_definition" "aeims_services" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.aeims_logs[each.key].name
+          "awslogs-group"         = aws_cloudwatch_log_group.aeims_logs[replace(each.key, "_", "-")].name
           "awslogs-region"        = var.aws_region
           "awslogs-stream-prefix" = "ecs"
         }
@@ -299,10 +301,8 @@ resource "aws_ecs_service" "aeims_services" {
     container_port   = each.value.port
   }
 
-  deployment_configuration {
-    maximum_percent         = 200
-    minimum_healthy_percent = 100
-  }
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
 
   depends_on = [
     aws_lb_listener.aeims_listener_http,
@@ -320,7 +320,7 @@ resource "aws_ecs_service" "aeims_services" {
 resource "aws_lb_target_group" "aeims_targets" {
   for_each = var.ecs_service_configs
 
-  name        = "${var.project_name}-${each.key}-tg-${var.environment}"
+  name        = "${substr(replace("${var.project_name}-${replace(each.key, "_", "-")}-${var.environment}", "_", "-"), 0, 32)}"
   port        = each.value.port
   protocol    = "HTTP"
   vpc_id      = aws_vpc.aeims_vpc.id
@@ -364,13 +364,16 @@ resource "aws_lb_listener" "aeims_listener_http" {
 
 # Load Balancer Listener (HTTPS) - conditional
 resource "aws_lb_listener" "aeims_listener_https" {
-  count = var.certificate_arn != "" ? 1 : 0
+  count = var.certificate_arn != "" || length(var.additional_domains) > 0 ? 1 : 0
 
   load_balancer_arn = aws_lb.aeims_alb.arn
   port              = "443"
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
-  certificate_arn   = var.certificate_arn
+  certificate_arn   = var.certificate_arn != "" ? var.certificate_arn : (
+    length(aws_acm_certificate_validation.domain_validations) > 0 ? 
+    values(aws_acm_certificate_validation.domain_validations)[0].certificate_arn : null
+  )
 
   default_action {
     type             = "forward"
@@ -378,9 +381,24 @@ resource "aws_lb_listener" "aeims_listener_https" {
   }
 }
 
+# Additional certificate attachments for multiple domains
+resource "aws_lb_listener_certificate" "additional_certificates" {
+  for_each = {
+    for domain_key in keys(aws_acm_certificate_validation.domain_validations) : domain_key => var.additional_domains[domain_key]
+  }
+
+  listener_arn    = aws_lb_listener.aeims_listener_https[0].arn
+  certificate_arn = aws_acm_certificate_validation.domain_validations[each.key].certificate_arn
+
+  depends_on = [
+    aws_lb_listener.aeims_listener_https,
+    aws_acm_certificate_validation.domain_validations
+  ]
+}
+
 # Listener Rules for routing
 resource "aws_lb_listener_rule" "aeims_core_rule" {
-  listener_arn = var.certificate_arn != "" ? aws_lb_listener.aeims_listener_https[0].arn : aws_lb_listener.aeims_listener_http.arn
+  listener_arn = (var.certificate_arn != "" || length(var.additional_domains) > 0) ? aws_lb_listener.aeims_listener_https[0].arn : aws_lb_listener.aeims_listener_http.arn
   priority     = 100
 
   action {
@@ -396,7 +414,7 @@ resource "aws_lb_listener_rule" "aeims_core_rule" {
 }
 
 resource "aws_lb_listener_rule" "aeims_lib_rule" {
-  listener_arn = var.certificate_arn != "" ? aws_lb_listener.aeims_listener_https[0].arn : aws_lb_listener.aeims_listener_http.arn
+  listener_arn = (var.certificate_arn != "" || length(var.additional_domains) > 0) ? aws_lb_listener.aeims_listener_https[0].arn : aws_lb_listener.aeims_listener_http.arn
   priority     = 200
 
   action {
@@ -423,7 +441,7 @@ resource "aws_lb_listener_rule" "microservice_rules" {
     analytics_service    = { path = "/analytics/*", priority = 900 }
   }
 
-  listener_arn = var.certificate_arn != "" ? aws_lb_listener.aeims_listener_https[0].arn : aws_lb_listener.aeims_listener_http.arn
+  listener_arn = (var.certificate_arn != "" || length(var.additional_domains) > 0) ? aws_lb_listener.aeims_listener_https[0].arn : aws_lb_listener.aeims_listener_http.arn
   priority     = each.value.priority
 
   action {
@@ -436,6 +454,33 @@ resource "aws_lb_listener_rule" "microservice_rules" {
       values = [each.value.path]
     }
   }
+}
+
+# Domain-specific routing rules for additional domains
+resource "aws_lb_listener_rule" "domain_specific_rules" {
+  for_each = {
+    for domain_key, domain_config in var.additional_domains : domain_key => domain_config
+    if var.certificate_arn != "" || length(var.additional_domains) > 0
+  }
+
+  listener_arn = aws_lb_listener.aeims_listener_https[0].arn
+  priority     = 1000 + index(keys(var.additional_domains), each.key)
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.aeims_targets["aeims_app"].arn
+  }
+
+  condition {
+    host_header {
+      values = concat([each.value.domain_name], each.value.sans)
+    }
+  }
+
+  depends_on = [
+    aws_lb_listener.aeims_listener_https,
+    aws_lb_listener_certificate.additional_certificates
+  ]
 }
 
 # Auto Scaling for ECS Services

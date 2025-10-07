@@ -1,0 +1,16 @@
+# Override configuration for corrected startup sequence
+
+services:
+  # AEIMS Core (PHP Application) - Additional environment variables
+  aeims-core:
+    environment:
+      - AEIMS_LIB_URL=http://aeims-lib:8080
+      - DEBUG=1
+      - LOG_LEVEL=debug
+
+  # aeimsLib (Device Control Service) - Additional configuration
+  aeims-lib:
+    environment:
+      - DEBUG=1
+      - LOG_LEVEL=debug
+

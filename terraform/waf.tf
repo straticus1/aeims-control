@@ -49,8 +49,11 @@ resource "aws_wafv2_web_acl" "aeims_waf" {
         name        = "AWSManagedRulesCommonRuleSet"
         vendor_name = "AWS"
 
-        excluded_rule {
+        rule_action_override {
           name = "SizeRestrictions_BODY"
+          action_to_use {
+            allow {}
+          }
         }
       }
     }
@@ -161,8 +164,11 @@ resource "aws_wafv2_web_acl" "aeims_waf" {
     }
 
     statement {
-      and_statement {
-        statement {
+      rate_based_statement {
+        limit              = var.api_rate_limit
+        aggregate_key_type = "IP"
+
+        scope_down_statement {
           byte_match_statement {
             field_to_match {
               uri_path {}
@@ -173,12 +179,6 @@ resource "aws_wafv2_web_acl" "aeims_waf" {
               priority = 1
               type     = "LOWERCASE"
             }
-          }
-        }
-        statement {
-          rate_based_statement {
-            limit              = var.api_rate_limit
-            aggregate_key_type = "IP"
           }
         }
       }
@@ -271,7 +271,10 @@ resource "aws_wafv2_web_acl_logging_configuration" "aeims_waf_logging" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.waf_logs]
+  depends_on = [
+    aws_cloudwatch_log_group.waf_logs,
+    aws_wafv2_web_acl.aeims_waf
+  ]
 }
 
 # CloudWatch Log Group for WAF
