@@ -163,6 +163,12 @@
         "name": "aeimsLib",
         "path": "../aeimsLib",
         "type": "device-library"
+      },
+      {
+        "name": "aeims-asterisk",
+        "path": "../aeims-asterisk",
+        "type": "voip-telephony",
+        "services": ["asterisk", "aeims-asterisk-adapter", "aeims-billing"]
       }
     ]
   },

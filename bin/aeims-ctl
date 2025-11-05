@@ -1,0 +1,1037 @@
+#!/usr/bin/env node
+
+/**
+ * AEIMS Control Plane CLI
+ *
+ * Unified command-line interface for managing all AEIMS services
+ * across multiple repositories and deployment environments.
+ *
+ * Usage:
+ *   aeims-ctl status [service]           - Show status of services
+ *   aeims-ctl start <service|all>        - Start service(s)
+ *   aeims-ctl stop <service|all>         - Stop service(s)
+ *   aeims-ctl restart <service|all>      - Restart service(s)
+ *   aeims-ctl logs <service> [--follow]  - View service logs
+ *   aeims-ctl list                       - List all services
+ *   aeims-ctl health [service]           - Check health endpoints
+ *   aeims-ctl ps                         - Show running containers
+ *   aeims-ctl detect [--local|--aws|--all] - Detect unregistered services
+ *   aeims-ctl enroll <container>         - Enroll discovered service
+ *
+ * Global flags:
+ *   --json                               - Output in JSON format
+ *   --verbose, -v                        - Verbose output
+ *   --help, -h                           - Show help
+ */
+
+const { execSync, spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+class AeimsControlPlane {
+  constructor() {
+    this.homedir = os.homedir();
+    this.baseDir = path.join(this.homedir, 'development');
+    this.jsonOutput = false;
+    this.verbose = false;
+
+    // Service registry - maps all known services to their locations
+    this.serviceRegistry = {
+      // aeims-control production services
+      'redis': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'database',
+        port: 6379,
+        healthEndpoint: null
+      },
+      'postgres': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'database',
+        port: 5432,
+        healthEndpoint: null
+      },
+      'mysql': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'database',
+        port: 3306,
+        healthEndpoint: null
+      },
+      'aeims-lib': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'websocket',
+        port: 3000,
+        healthEndpoint: 'http://localhost:3000/health'
+      },
+      'aeims-core': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'api',
+        port: 8000,
+        healthEndpoint: 'http://localhost:8000/health'
+      },
+      'aeims-admin': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'web',
+        port: 8001,
+        healthEndpoint: 'http://localhost:8001/health.php'
+      },
+      'aeims-app': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'frontend',
+        port: 3001,
+        healthEndpoint: 'http://localhost:3001/'
+      },
+      'nginx': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'proxy',
+        port: 80,
+        healthEndpoint: 'http://localhost:8080/health'
+      },
+      'health-monitor': {
+        repo: 'aeims-control',
+        compose: 'docker-compose-production.yml',
+        type: 'monitor',
+        port: null,
+        healthEndpoint: null
+      },
+
+      // aeims main services
+      'admin-service': {
+        repo: 'aeims',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8000,
+        healthEndpoint: 'http://localhost:8000/health'
+      },
+      'id-verify-service': {
+        repo: 'aeims',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8001,
+        healthEndpoint: 'http://localhost:8001/health'
+      },
+      'aeims-web': {
+        repo: 'aeims',
+        compose: 'docker-compose.yml',
+        type: 'web',
+        port: 8080,
+        healthEndpoint: 'http://localhost:8080/'
+      },
+
+      // aeims telephony-platform microservices
+      'user-service': {
+        repo: 'aeims/telephony-platform',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8001,
+        healthEndpoint: 'http://localhost:8001/health'
+      },
+      'billing-service': {
+        repo: 'aeims/telephony-platform',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8002,
+        healthEndpoint: 'http://localhost:8002/health'
+      },
+      'call-service': {
+        repo: 'aeims/telephony-platform',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8003,
+        healthEndpoint: 'http://localhost:8003/health'
+      },
+      'operator-service': {
+        repo: 'aeims/telephony-platform',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8004,
+        healthEndpoint: 'http://localhost:8004/health'
+      },
+      'conference-service': {
+        repo: 'aeims/telephony-platform',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8005,
+        healthEndpoint: 'http://localhost:8005/health'
+      },
+      'notification-service': {
+        repo: 'aeims/telephony-platform',
+        compose: 'docker-compose.yml',
+        type: 'microservice',
+        port: 8006,
+        healthEndpoint: 'http://localhost:8006/health'
+      }
+    };
+
+    // Color codes for terminal output
+    this.colors = {
+      reset: '\x1b[0m',
+      bright: '\x1b[1m',
+      dim: '\x1b[2m',
+      red: '\x1b[31m',
+      green: '\x1b[32m',
+      yellow: '\x1b[33m',
+      blue: '\x1b[34m',
+      magenta: '\x1b[35m',
+      cyan: '\x1b[36m',
+      white: '\x1b[37m'
+    };
+  }
+
+  // Parse command line arguments
+  parseArgs(args) {
+    const parsed = {
+      command: null,
+      target: null,
+      flags: {}
+    };
+
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+
+      if (arg.startsWith('--')) {
+        const flag = arg.substring(2);
+        if (flag === 'json') {
+          this.jsonOutput = true;
+          parsed.flags.json = true;
+        } else if (flag === 'verbose') {
+          this.verbose = true;
+          parsed.flags.verbose = true;
+        } else if (flag === 'follow' || flag === 'f') {
+          parsed.flags.follow = true;
+        } else if (flag === 'help') {
+          parsed.flags.help = true;
+        } else if (flag === 'local') {
+          parsed.flags.local = true;
+        } else if (flag === 'aws') {
+          parsed.flags.aws = true;
+        } else if (flag === 'all') {
+          parsed.flags.all = true;
+        }
+      } else if (arg.startsWith('-')) {
+        const flag = arg.substring(1);
+        if (flag === 'v') {
+          this.verbose = true;
+          parsed.flags.verbose = true;
+        } else if (flag === 'f') {
+          parsed.flags.follow = true;
+        } else if (flag === 'h') {
+          parsed.flags.help = true;
+        }
+      } else {
+        if (!parsed.command) {
+          parsed.command = arg;
+        } else if (!parsed.target) {
+          parsed.target = arg;
+        }
+      }
+    }
+
+    return parsed;
+  }
+
+  // Output formatted text or JSON
+  output(data, type = 'info') {
+    if (this.jsonOutput) {
+      console.log(JSON.stringify(data, null, 2));
+    } else {
+      if (typeof data === 'string') {
+        const color = type === 'error' ? this.colors.red :
+                     type === 'success' ? this.colors.green :
+                     type === 'warning' ? this.colors.yellow :
+                     type === 'info' ? this.colors.cyan : '';
+        console.log(`${color}${data}${this.colors.reset}`);
+      } else {
+        console.log(data);
+      }
+    }
+  }
+
+  // Execute docker-compose command
+  execDockerCompose(repo, composeFile, command, service = null) {
+    const repoPath = path.join(this.baseDir, repo);
+    const composePath = path.join(repoPath, composeFile);
+
+    if (!fs.existsSync(composePath)) {
+      throw new Error(`Docker compose file not found: ${composePath}`);
+    }
+
+    const serviceArg = service ? ` ${service}` : '';
+    const cmd = `docker compose -f ${composePath} ${command}${serviceArg}`;
+
+    if (this.verbose) {
+      this.output(`Executing: ${cmd}`, 'info');
+    }
+
+    try {
+      const result = execSync(cmd, {
+        cwd: repoPath,
+        encoding: 'utf8',
+        stdio: this.verbose ? 'inherit' : 'pipe'
+      });
+      return result;
+    } catch (error) {
+      throw new Error(`Command failed: ${error.message}`);
+    }
+  }
+
+  // Get status of all or specific services
+  async getStatus(serviceName = null) {
+    const services = serviceName ?
+      { [serviceName]: this.serviceRegistry[serviceName] } :
+      this.serviceRegistry;
+
+    if (!services || Object.keys(services).length === 0) {
+      throw new Error(`Service not found: ${serviceName}`);
+    }
+
+    const statuses = {};
+    const groupedServices = {};
+
+    // Group services by repo
+    for (const [name, config] of Object.entries(services)) {
+      const key = `${config.repo}/${config.compose}`;
+      if (!groupedServices[key]) {
+        groupedServices[key] = { repo: config.repo, compose: config.compose, services: [] };
+      }
+      groupedServices[key].services.push(name);
+    }
+
+    // Get status for each group
+    for (const [key, group] of Object.entries(groupedServices)) {
+      try {
+        const result = this.execDockerCompose(group.repo, group.compose, 'ps --format json');
+        const containers = result.trim().split('\n')
+          .filter(line => line.trim())
+          .map(line => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return null;
+            }
+          })
+          .filter(c => c !== null);
+
+        for (const service of group.services) {
+          const container = containers.find(c => c.Service === service || c.Name.includes(service));
+          statuses[service] = {
+            status: container ? container.State : 'not running',
+            health: container?.Health || 'unknown',
+            ports: this.serviceRegistry[service].port,
+            type: this.serviceRegistry[service].type,
+            repo: this.serviceRegistry[service].repo
+          };
+        }
+      } catch (error) {
+        for (const service of group.services) {
+          statuses[service] = {
+            status: 'error',
+            error: error.message,
+            type: this.serviceRegistry[service].type,
+            repo: this.serviceRegistry[service].repo
+          };
+        }
+      }
+    }
+
+    if (this.jsonOutput) {
+      this.output(statuses);
+    } else {
+      this.printStatusTable(statuses);
+    }
+
+    return statuses;
+  }
+
+  // Print status in a formatted table
+  printStatusTable(statuses) {
+    console.log(`\n${this.colors.bright}AEIMS Services Status${this.colors.reset}\n`);
+    console.log(`${'Service'.padEnd(30)} ${'Status'.padEnd(15)} ${'Type'.padEnd(15)} ${'Port'.padEnd(8)} ${'Repository'.padEnd(30)}`);
+    console.log('─'.repeat(120));
+
+    for (const [name, info] of Object.entries(statuses)) {
+      const statusColor = info.status === 'running' ? this.colors.green :
+                         info.status === 'exited' ? this.colors.red :
+                         info.status === 'paused' ? this.colors.yellow :
+                         this.colors.dim;
+
+      const status = info.status || 'unknown';
+      const type = info.type || 'unknown';
+      const port = info.ports || 'N/A';
+      const repo = info.repo || 'unknown';
+
+      console.log(
+        `${name.padEnd(30)} ` +
+        `${statusColor}${status.padEnd(15)}${this.colors.reset} ` +
+        `${type.padEnd(15)} ` +
+        `${String(port).padEnd(8)} ` +
+        `${this.colors.dim}${repo.padEnd(30)}${this.colors.reset}`
+      );
+    }
+    console.log();
+  }
+
+  // List all services
+  listServices() {
+    if (this.jsonOutput) {
+      this.output(this.serviceRegistry);
+    } else {
+      console.log(`\n${this.colors.bright}AEIMS Service Registry${this.colors.reset}\n`);
+      console.log(`Total services: ${Object.keys(this.serviceRegistry).length}\n`);
+
+      const byRepo = {};
+      for (const [name, config] of Object.entries(this.serviceRegistry)) {
+        if (!byRepo[config.repo]) {
+          byRepo[config.repo] = [];
+        }
+        byRepo[config.repo].push({ name, ...config });
+      }
+
+      for (const [repo, services] of Object.entries(byRepo)) {
+        console.log(`${this.colors.cyan}${repo}${this.colors.reset} (${services.length} services)`);
+        for (const svc of services) {
+          const portInfo = svc.port ? `:${svc.port}` : '';
+          console.log(`  ${this.colors.green}●${this.colors.reset} ${svc.name.padEnd(25)} ${this.colors.dim}[${svc.type}${portInfo}]${this.colors.reset}`);
+        }
+        console.log();
+      }
+    }
+  }
+
+  // Start service(s)
+  async startService(target) {
+    if (target === 'all') {
+      return this.startAll();
+    }
+
+    const service = this.serviceRegistry[target];
+    if (!service) {
+      throw new Error(`Service not found: ${target}`);
+    }
+
+    this.output(`Starting ${target}...`, 'info');
+    this.execDockerCompose(service.repo, service.compose, 'up -d', target);
+    this.output(`✓ ${target} started successfully`, 'success');
+  }
+
+  // Stop service(s)
+  async stopService(target) {
+    if (target === 'all') {
+      return this.stopAll();
+    }
+
+    const service = this.serviceRegistry[target];
+    if (!service) {
+      throw new Error(`Service not found: ${target}`);
+    }
+
+    this.output(`Stopping ${target}...`, 'info');
+    this.execDockerCompose(service.repo, service.compose, 'stop', target);
+    this.output(`✓ ${target} stopped successfully`, 'success');
+  }
+
+  // Restart service(s)
+  async restartService(target) {
+    if (target === 'all') {
+      return this.restartAll();
+    }
+
+    const service = this.serviceRegistry[target];
+    if (!service) {
+      throw new Error(`Service not found: ${target}`);
+    }
+
+    this.output(`Restarting ${target}...`, 'info');
+    this.execDockerCompose(service.repo, service.compose, 'restart', target);
+    this.output(`✓ ${target} restarted successfully`, 'success');
+  }
+
+  // View service logs
+  async viewLogs(target, follow = false) {
+    const service = this.serviceRegistry[target];
+    if (!service) {
+      throw new Error(`Service not found: ${target}`);
+    }
+
+    const followFlag = follow ? '-f' : '';
+    const repoPath = path.join(this.baseDir, service.repo);
+    const composePath = path.join(repoPath, service.compose);
+
+    const proc = spawn('docker', ['compose', '-f', composePath, 'logs', followFlag, target], {
+      cwd: repoPath,
+      stdio: 'inherit'
+    });
+
+    proc.on('error', (error) => {
+      this.output(`Error viewing logs: ${error.message}`, 'error');
+    });
+  }
+
+  // Check health endpoints
+  async checkHealth(serviceName = null) {
+    const services = serviceName ?
+      { [serviceName]: this.serviceRegistry[serviceName] } :
+      this.serviceRegistry;
+
+    const healthChecks = {};
+
+    for (const [name, config] of Object.entries(services)) {
+      if (!config.healthEndpoint) {
+        healthChecks[name] = { status: 'no health endpoint', healthy: null };
+        continue;
+      }
+
+      try {
+        const response = execSync(`curl -sf ${config.healthEndpoint}`, {
+          encoding: 'utf8',
+          timeout: 5000,
+          stdio: 'pipe'
+        });
+        healthChecks[name] = { status: 'healthy', healthy: true, endpoint: config.healthEndpoint };
+      } catch (error) {
+        healthChecks[name] = { status: 'unhealthy', healthy: false, endpoint: config.healthEndpoint };
+      }
+    }
+
+    if (this.jsonOutput) {
+      this.output(healthChecks);
+    } else {
+      console.log(`\n${this.colors.bright}Health Check Results${this.colors.reset}\n`);
+      for (const [name, result] of Object.entries(healthChecks)) {
+        const icon = result.healthy === true ? '✓' : result.healthy === false ? '✗' : '○';
+        const color = result.healthy === true ? this.colors.green :
+                     result.healthy === false ? this.colors.red :
+                     this.colors.dim;
+        console.log(`${color}${icon} ${name.padEnd(30)}${this.colors.reset} ${result.status}`);
+      }
+      console.log();
+    }
+  }
+
+  // Show running containers (ps command)
+  async showContainers() {
+    const result = execSync('docker ps --format "{{.ID}}\\t{{.Names}}\\t{{.Status}}\\t{{.Ports}}"', {
+      encoding: 'utf8'
+    });
+
+    if (this.jsonOutput) {
+      const containers = result.trim().split('\n').map(line => {
+        const [id, name, status, ports] = line.split('\t');
+        return { id, name, status, ports };
+      });
+      this.output(containers);
+    } else {
+      console.log(`\n${this.colors.bright}Running AEIMS Containers${this.colors.reset}\n`);
+      console.log(result);
+    }
+  }
+
+  // Detect unregistered services
+  async detectServices(flags) {
+    const detected = {
+      local: [],
+      aws: [],
+      summary: {
+        total: 0,
+        enrolled: 0,
+        unregistered: 0
+      }
+    };
+
+    // Detect local Docker containers
+    if (flags.local || flags.all || (!flags.local && !flags.aws)) {
+      if (this.verbose) {
+        this.output('Scanning local Docker containers...', 'info');
+      }
+      detected.local = await this.detectLocalContainers();
+    }
+
+    // Detect AWS ECS services
+    if (flags.aws || flags.all) {
+      if (this.verbose) {
+        this.output('Scanning AWS ECS services...', 'info');
+      }
+      detected.aws = await this.detectAWSServices();
+    }
+
+    detected.summary.total = detected.local.length + detected.aws.length;
+    detected.summary.enrolled = detected.local.filter(c => c.enrolled).length +
+                                detected.aws.filter(s => s.enrolled).length;
+    detected.summary.unregistered = detected.summary.total - detected.summary.enrolled;
+
+    if (this.jsonOutput) {
+      this.output(detected);
+    } else {
+      this.printDetectionResults(detected);
+    }
+
+    return detected;
+  }
+
+  // Detect local Docker containers
+  async detectLocalContainers() {
+    const containers = [];
+
+    try {
+      const result = execSync('docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}"', {
+        encoding: 'utf8'
+      });
+
+      const lines = result.trim().split('\n').filter(line => line);
+
+      for (const line of lines) {
+        const [id, name, image, ports, status] = line.split('|');
+
+        // Check if container is enrolled in registry
+        const enrolled = Object.keys(this.serviceRegistry).some(service => {
+          return name.includes(service) || name.includes('aeims');
+        });
+
+        // Extract port numbers
+        const portMatches = ports.match(/(\d+)->(\d+)/g) || [];
+        const exposedPorts = portMatches.map(p => {
+          const [host, container] = p.split('->');
+          return { host: host.split(':').pop(), container };
+        });
+
+        containers.push({
+          id: id.substring(0, 12),
+          name,
+          image,
+          ports: exposedPorts,
+          status,
+          enrolled,
+          source: 'local'
+        });
+      }
+    } catch (error) {
+      if (this.verbose) {
+        this.output(`Error scanning local containers: ${error.message}`, 'error');
+      }
+    }
+
+    return containers;
+  }
+
+  // Detect AWS ECS services
+  async detectAWSServices() {
+    const services = [];
+
+    try {
+      // Check if AWS CLI is available
+      try {
+        execSync('aws --version', { stdio: 'pipe' });
+      } catch {
+        if (this.verbose) {
+          this.output('AWS CLI not found, skipping AWS detection', 'warning');
+        }
+        return services;
+      }
+
+      // Get ECS clusters
+      const clustersResult = execSync('aws ecs list-clusters --output json', {
+        encoding: 'utf8',
+        stdio: 'pipe'
+      });
+
+      const clusters = JSON.parse(clustersResult);
+
+      if (!clusters.clusterArns || clusters.clusterArns.length === 0) {
+        if (this.verbose) {
+          this.output('No ECS clusters found', 'info');
+        }
+        return services;
+      }
+
+      // Get services from each cluster
+      for (const clusterArn of clusters.clusterArns) {
+        const clusterName = clusterArn.split('/').pop();
+
+        try {
+          const servicesResult = execSync(
+            `aws ecs list-services --cluster ${clusterName} --output json`,
+            { encoding: 'utf8', stdio: 'pipe' }
+          );
+
+          const clusterServices = JSON.parse(servicesResult);
+
+          if (clusterServices.serviceArns && clusterServices.serviceArns.length > 0) {
+            // Get detailed service information
+            const serviceArns = clusterServices.serviceArns.join(' ');
+            const detailsResult = execSync(
+              `aws ecs describe-services --cluster ${clusterName} --services ${serviceArns} --output json`,
+              { encoding: 'utf8', stdio: 'pipe' }
+            );
+
+            const details = JSON.parse(detailsResult);
+
+            for (const service of details.services) {
+              const serviceName = service.serviceName;
+
+              // Check if service is enrolled in registry
+              const enrolled = Object.keys(this.serviceRegistry).includes(serviceName);
+
+              services.push({
+                name: serviceName,
+                cluster: clusterName,
+                status: service.status,
+                desiredCount: service.desiredCount,
+                runningCount: service.runningCount,
+                taskDefinition: service.taskDefinition.split('/').pop(),
+                enrolled,
+                source: 'aws-ecs'
+              });
+            }
+          }
+        } catch (error) {
+          if (this.verbose) {
+            this.output(`Error scanning cluster ${clusterName}: ${error.message}`, 'warning');
+          }
+        }
+      }
+
+      // Get ECS tasks
+      for (const clusterArn of clusters.clusterArns) {
+        const clusterName = clusterArn.split('/').pop();
+
+        try {
+          const tasksResult = execSync(
+            `aws ecs list-tasks --cluster ${clusterName} --output json`,
+            { encoding: 'utf8', stdio: 'pipe' }
+          );
+
+          const tasks = JSON.parse(tasksResult);
+
+          if (tasks.taskArns && tasks.taskArns.length > 0) {
+            const taskArns = tasks.taskArns.join(' ');
+            const taskDetailsResult = execSync(
+              `aws ecs describe-tasks --cluster ${clusterName} --tasks ${taskArns} --output json`,
+              { encoding: 'utf8', stdio: 'pipe' }
+            );
+
+            const taskDetails = JSON.parse(taskDetailsResult);
+
+            for (const task of taskDetails.tasks) {
+              const taskId = task.taskArn.split('/').pop();
+              const taskDefFamily = task.taskDefinitionArn.split('/').pop().split(':')[0];
+
+              services.push({
+                name: `task-${taskDefFamily}`,
+                taskId: taskId.substring(0, 12),
+                cluster: clusterName,
+                status: task.lastStatus,
+                taskDefinition: task.taskDefinitionArn.split('/').pop(),
+                enrolled: false,
+                source: 'aws-ecs-task'
+              });
+            }
+          }
+        } catch (error) {
+          if (this.verbose) {
+            this.output(`Error scanning tasks in ${clusterName}: ${error.message}`, 'warning');
+          }
+        }
+      }
+    } catch (error) {
+      if (this.verbose) {
+        this.output(`Error detecting AWS services: ${error.message}`, 'error');
+      }
+    }
+
+    return services;
+  }
+
+  // Print detection results
+  printDetectionResults(detected) {
+    console.log(`\n${this.colors.bright}Service Detection Results${this.colors.reset}\n`);
+
+    // Summary
+    console.log(`${this.colors.cyan}Summary:${this.colors.reset}`);
+    console.log(`  Total services found: ${detected.summary.total}`);
+    console.log(`  Enrolled: ${this.colors.green}${detected.summary.enrolled}${this.colors.reset}`);
+    console.log(`  Unregistered: ${this.colors.yellow}${detected.summary.unregistered}${this.colors.reset}\n`);
+
+    // Local containers
+    if (detected.local.length > 0) {
+      console.log(`${this.colors.cyan}Local Docker Containers (${detected.local.length}):${this.colors.reset}\n`);
+      console.log(`${'Container'.padEnd(25)} ${'Enrolled'.padEnd(12)} ${'Ports'.padEnd(20)} ${'Status'.padEnd(20)}`);
+      console.log('─'.repeat(90));
+
+      for (const container of detected.local) {
+        const enrolledIcon = container.enrolled ?
+          `${this.colors.green}✓ Yes${this.colors.reset}` :
+          `${this.colors.yellow}✗ No${this.colors.reset}`;
+
+        const portStr = container.ports.length > 0 ?
+          container.ports.map(p => p.host).join(',') :
+          'none';
+
+        console.log(
+          `${container.name.substring(0, 24).padEnd(25)} ` +
+          `${enrolledIcon.padEnd(22)} ` +
+          `${portStr.padEnd(20)} ` +
+          `${this.colors.dim}${container.status.substring(0, 19)}${this.colors.reset}`
+        );
+      }
+      console.log();
+    }
+
+    // AWS ECS services
+    if (detected.aws.length > 0) {
+      console.log(`${this.colors.cyan}AWS ECS Services (${detected.aws.length}):${this.colors.reset}\n`);
+      console.log(`${'Service'.padEnd(30)} ${'Enrolled'.padEnd(12)} ${'Cluster'.padEnd(25)} ${'Status'.padEnd(15)}`);
+      console.log('─'.repeat(90));
+
+      for (const service of detected.aws) {
+        const enrolledIcon = service.enrolled ?
+          `${this.colors.green}✓ Yes${this.colors.reset}` :
+          `${this.colors.yellow}✗ No${this.colors.reset}`;
+
+        console.log(
+          `${service.name.substring(0, 29).padEnd(30)} ` +
+          `${enrolledIcon.padEnd(22)} ` +
+          `${this.colors.dim}${service.cluster.substring(0, 24).padEnd(25)}${this.colors.reset} ` +
+          `${service.status}`
+        );
+      }
+      console.log();
+    }
+
+    // Show enrollment suggestions
+    const unregistered = [
+      ...detected.local.filter(c => !c.enrolled),
+      ...detected.aws.filter(s => !s.enrolled)
+    ];
+
+    if (unregistered.length > 0) {
+      console.log(`${this.colors.yellow}💡 Tip:${this.colors.reset} Enroll unregistered services with:`);
+      console.log(`${this.colors.dim}    aeims-ctl enroll <container-name>${this.colors.reset}\n`);
+    }
+  }
+
+  // Enroll a discovered service
+  async enrollService(containerName) {
+    this.output(`Enrolling service: ${containerName}`, 'info');
+
+    // Detect the service details
+    const local = await this.detectLocalContainers();
+    const container = local.find(c => c.name === containerName || c.name.includes(containerName));
+
+    if (!container) {
+      throw new Error(`Container not found: ${containerName}`);
+    }
+
+    if (container.enrolled) {
+      this.output(`Service ${containerName} is already enrolled`, 'warning');
+      return;
+    }
+
+    // Generate enrollment configuration
+    const enrollment = {
+      name: container.name,
+      repo: 'discovered',
+      compose: 'docker-compose.yml',
+      type: 'discovered',
+      port: container.ports.length > 0 ? parseInt(container.ports[0].host) : null,
+      healthEndpoint: container.ports.length > 0 ?
+        `http://localhost:${container.ports[0].host}/health` : null
+    };
+
+    if (this.jsonOutput) {
+      this.output({
+        message: 'Service enrollment configuration',
+        service: enrollment,
+        instructions: 'Add this to the serviceRegistry in aeims-ctl'
+      });
+    } else {
+      console.log(`\n${this.colors.bright}Service Enrollment Configuration${this.colors.reset}\n`);
+      console.log(`Add the following to ${this.colors.cyan}this.serviceRegistry${this.colors.reset} in aeims-ctl:\n`);
+      console.log(`${this.colors.dim}'${enrollment.name}': ${JSON.stringify(enrollment, null, 2)}${this.colors.reset}\n`);
+      this.output('✓ Configuration generated. Manual enrollment required.', 'success');
+    }
+  }
+
+  // Start all services
+  async startAll() {
+    this.output('Starting all AEIMS services...', 'info');
+    const repos = {};
+
+    for (const [name, config] of Object.entries(this.serviceRegistry)) {
+      const key = `${config.repo}/${config.compose}`;
+      if (!repos[key]) {
+        repos[key] = config;
+      }
+    }
+
+    for (const config of Object.values(repos)) {
+      try {
+        this.execDockerCompose(config.repo, config.compose, 'up -d');
+      } catch (error) {
+        this.output(`Error starting services in ${config.repo}: ${error.message}`, 'error');
+      }
+    }
+
+    this.output('✓ All services started', 'success');
+  }
+
+  // Stop all services
+  async stopAll() {
+    this.output('Stopping all AEIMS services...', 'info');
+    const repos = {};
+
+    for (const [name, config] of Object.entries(this.serviceRegistry)) {
+      const key = `${config.repo}/${config.compose}`;
+      if (!repos[key]) {
+        repos[key] = config;
+      }
+    }
+
+    for (const config of Object.values(repos)) {
+      try {
+        this.execDockerCompose(config.repo, config.compose, 'stop');
+      } catch (error) {
+        this.output(`Error stopping services in ${config.repo}: ${error.message}`, 'error');
+      }
+    }
+
+    this.output('✓ All services stopped', 'success');
+  }
+
+  // Restart all services
+  async restartAll() {
+    this.output('Restarting all AEIMS services...', 'info');
+    await this.stopAll();
+    await this.startAll();
+    this.output('✓ All services restarted', 'success');
+  }
+
+  // Show help
+  showHelp() {
+    const help = `
+${this.colors.bright}AEIMS Control Plane${this.colors.reset} - Unified service management CLI
+
+${this.colors.cyan}USAGE:${this.colors.reset}
+  aeims-ctl <command> [options]
+
+${this.colors.cyan}COMMANDS:${this.colors.reset}
+  ${this.colors.green}status [service]${this.colors.reset}           Show status of all or specific service
+  ${this.colors.green}list${this.colors.reset}                       List all available services
+  ${this.colors.green}start <service|all>${this.colors.reset}        Start service(s)
+  ${this.colors.green}stop <service|all>${this.colors.reset}         Stop service(s)
+  ${this.colors.green}restart <service|all>${this.colors.reset}      Restart service(s)
+  ${this.colors.green}logs <service>${this.colors.reset}             View service logs
+  ${this.colors.green}health [service]${this.colors.reset}           Check health endpoints
+  ${this.colors.green}ps${this.colors.reset}                         Show running containers
+  ${this.colors.green}detect${this.colors.reset}                     Detect unregistered services
+  ${this.colors.green}enroll <container>${this.colors.reset}         Enroll discovered service
+
+${this.colors.cyan}FLAGS:${this.colors.reset}
+  ${this.colors.yellow}--json${this.colors.reset}                     Output in JSON format
+  ${this.colors.yellow}--verbose, -v${this.colors.reset}              Verbose output
+  ${this.colors.yellow}--follow, -f${this.colors.reset}               Follow logs (for logs command)
+  ${this.colors.yellow}--local${this.colors.reset}                    Detect local Docker containers
+  ${this.colors.yellow}--aws${this.colors.reset}                      Detect AWS ECS services
+  ${this.colors.yellow}--all${this.colors.reset}                      Detect all sources
+  ${this.colors.yellow}--help, -h${this.colors.reset}                 Show this help
+
+${this.colors.cyan}EXAMPLES:${this.colors.reset}
+  aeims-ctl status                  # Show status of all services
+  aeims-ctl status redis            # Show status of redis service
+  aeims-ctl start aeims-core        # Start aeims-core service
+  aeims-ctl restart all             # Restart all services
+  aeims-ctl logs aeims-lib -f       # Follow logs for aeims-lib
+  aeims-ctl health                  # Check all health endpoints
+  aeims-ctl detect                  # Detect unregistered local services
+  aeims-ctl detect --aws            # Detect AWS ECS services
+  aeims-ctl detect --all            # Detect all services (local + AWS)
+  aeims-ctl enroll my-container     # Enroll a discovered container
+  aeims-ctl list --json             # List services in JSON format
+
+${this.colors.dim}For more information, visit: https://github.com/afterdarksystems/aeims${this.colors.reset}
+`;
+    console.log(help);
+  }
+
+  // Main entry point
+  async run(args) {
+    const parsed = this.parseArgs(args);
+
+    if (parsed.flags.help || !parsed.command) {
+      this.showHelp();
+      return;
+    }
+
+    try {
+      switch (parsed.command) {
+        case 'status':
+          await this.getStatus(parsed.target);
+          break;
+        case 'list':
+          this.listServices();
+          break;
+        case 'start':
+          if (!parsed.target) {
+            throw new Error('Please specify a service name or "all"');
+          }
+          await this.startService(parsed.target);
+          break;
+        case 'stop':
+          if (!parsed.target) {
+            throw new Error('Please specify a service name or "all"');
+          }
+          await this.stopService(parsed.target);
+          break;
+        case 'restart':
+          if (!parsed.target) {
+            throw new Error('Please specify a service name or "all"');
+          }
+          await this.restartService(parsed.target);
+          break;
+        case 'logs':
+          if (!parsed.target) {
+            throw new Error('Please specify a service name');
+          }
+          await this.viewLogs(parsed.target, parsed.flags.follow);
+          break;
+        case 'health':
+          await this.checkHealth(parsed.target);
+          break;
+        case 'ps':
+          await this.showContainers();
+          break;
+        case 'detect':
+          await this.detectServices(parsed.flags);
+          break;
+        case 'enroll':
+          if (!parsed.target) {
+            throw new Error('Please specify a container name to enroll');
+          }
+          await this.enrollService(parsed.target);
+          break;
+        default:
+          this.output(`Unknown command: ${parsed.command}`, 'error');
+          this.showHelp();
+          process.exit(1);
+      }
+    } catch (error) {
+      if (this.jsonOutput) {
+        this.output({ error: error.message }, 'error');
+      } else {
+        this.output(`Error: ${error.message}`, 'error');
+      }
+      process.exit(1);
+    }
+  }
+}
+
+// Execute CLI
+const cli = new AeimsControlPlane();
+cli.run(process.argv.slice(2));

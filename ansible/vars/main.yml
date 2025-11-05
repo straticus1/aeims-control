@@ -83,6 +83,22 @@ docker:
       dockerfile: "Dockerfile"
       ports: [80, 443]
 
+    # Asterisk VoIP Services
+    asterisk:
+      context: "../aeims-asterisk/docker"
+      dockerfile: "Dockerfile"
+      ports: [5060, 5038, 8088, "10000-10100"]
+
+    asterisk_adapter:
+      context: "../aeims-asterisk/services/aeims-asterisk-adapter"
+      dockerfile: "Dockerfile"
+      ports: [8080]
+
+    asterisk_billing:
+      context: "../aeims-asterisk/services/aeims-billing"
+      dockerfile: "Dockerfile"
+      ports: [8090]
+
 # Feature Flags
 feature_flags:
   enable_aeims_core: true
@@ -195,6 +211,21 @@ load_balancer:
     - path: "/analytics/*"
       target: "analytics_service"
       priority: 900
+    - path: "/asterisk/*"
+      target: "asterisk"
+      priority: 100
+    - path: "/ari/*"
+      target: "asterisk"
+      priority: 101
+    - path: "/ami/*"
+      target: "asterisk"
+      priority: 102
+    - path: "/adapter/*"
+      target: "asterisk_adapter"
+      priority: 110
+    - path: "/call-billing/*"
+      target: "asterisk_billing"
+      priority: 120
     - path: "/*"
       target: "aeims_app"
       priority: 1000

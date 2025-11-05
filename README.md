@@ -2,8 +2,10 @@
 
 A comprehensive production-grade infrastructure management system for deploying and orchestrating the complete AEIMS ecosystem using Terraform, Ansible, and Docker. This system is fully compatible with SuperDeploy deployment patterns and manages all three AEIMS components as an integrated platform with advanced compliance monitoring, multi-domain support, and enterprise-grade security.
 
-## 🌟 Version 2.0.0 Highlights
+## 🌟 Version 2.1.0 Highlights
 
+- **🎮 Unified Control Plane**: New `aeims-ctl` CLI for managing all services across repositories
+- **🔍 Service Discovery**: Automatic detection of local Docker and AWS ECS services
 - **🏭 Production-Grade Infrastructure**: Complete AWS ECS deployment with auto-scaling, load balancing, and multi-AZ support
 - **🔒 Advanced Compliance**: Federal (FOSTA-SESTA), State (Florida), GDPR, and NY SHIELD Act monitoring
 - **🌐 Multi-Domain Management**: SSL certificates and routing for aeims.app, sexacomms.com, nycflirts.com, flirts.nyc
@@ -66,6 +68,9 @@ docker-compose up -d
 
 ```
 aeims-control/
+├── bin/                         # Command-line Tools
+│   └── aeims-ctl               # Unified control plane CLI (1000+ lines)
+│
 ├── terraform/                    # Infrastructure as Code
 │   ├── main.tf                  # Main Terraform configuration
 │   ├── variables.tf             # Variable definitions
@@ -81,6 +86,18 @@ aeims-control/
 │   │   └── ...
 │   └── inventory.yml            # Generated inventory
 │
+├── scripts/                     # Operational Scripts
+│   ├── emergency-site-restore.sh    # Site recovery procedures
+│   ├── setup-monitoring.sh          # Monitoring stack setup
+│   ├── get-secrets.sh               # Secrets management
+│   └── validate-docker-contexts.sh  # Docker validation
+│
+├── docs/                        # Documentation
+│   ├── CONTROL-PLANE.md         # Control plane reference (500+ lines)
+│   ├── AEIMS-CTL-QUICK-START.md # Quick start guide
+│   ├── DETECT-FEATURE.md        # Service discovery guide (400+ lines)
+│   └── SERVICE-INTEGRATION-ANALYSIS.md # Architecture analysis
+│
 ├── tests/                       # Integration Testing
 │   └── integration-test.sh     # Comprehensive test suite
 │
@@ -88,8 +105,61 @@ aeims-control/
 ├── docker-compose.yml           # Complete service orchestration
 ├── .env.example                 # Environment template
 ├── deploy.sh                    # SuperDeploy-compatible script
+├── CHANGELOG.md                 # Version history
 └── README.md                    # This file
 ```
+
+## 🎮 Control Plane Management
+
+### Unified CLI Tool
+
+The new `aeims-ctl` command provides centralized management for all AEIMS services:
+
+```bash
+# List all services
+aeims-ctl list
+
+# Check service status
+aeims-ctl status              # All services
+aeims-ctl status redis        # Specific service
+
+# Start/stop services
+aeims-ctl start all           # Start everything
+aeims-ctl start redis         # Start one service
+aeims-ctl stop all            # Stop everything
+aeims-ctl restart aeims-core  # Restart service
+
+# View logs
+aeims-ctl logs aeims-core     # View logs
+aeims-ctl logs nginx -f       # Follow logs in real-time
+
+# Service discovery
+aeims-ctl detect              # Find local Docker containers
+aeims-ctl detect --aws        # Discover AWS ECS services
+aeims-ctl detect --all        # Scan everything
+
+# Health checks
+aeims-ctl health              # Check all health endpoints
+aeims-ctl ps                  # Show running containers
+
+# JSON output for automation
+aeims-ctl status --json
+aeims-ctl list --json
+```
+
+**Installation:**
+```bash
+# Make executable
+chmod +x ~/development/aeims-control/bin/aeims-ctl
+
+# Add to PATH (add to ~/.zshrc or ~/.bashrc)
+export PATH="$HOME/development/aeims-control/bin:$PATH"
+
+# Verify
+aeims-ctl --help
+```
+
+**Full Documentation:** See [docs/CONTROL-PLANE.md](docs/CONTROL-PLANE.md) and [docs/AEIMS-CTL-QUICK-START.md](docs/AEIMS-CTL-QUICK-START.md)
 
 ## 🔧 Deployment Options
 
@@ -590,7 +660,14 @@ The `deploy.sh` script follows SuperDeploy conventions and supports all standard
 - [AEIMS Lib Documentation](../aeimsLib/README.md)
 - [SuperDeploy Documentation](../SuperDeploy/README.md)
 
-### New in Version 2.0.0
+### New in Version 2.1.0
+- [Control Plane Documentation](docs/CONTROL-PLANE.md) - Complete CLI reference (500+ lines)
+- [Quick Start Guide](docs/AEIMS-CTL-QUICK-START.md) - Essential commands and workflows
+- [Service Discovery Guide](docs/DETECT-FEATURE.md) - Local and AWS service detection (400+ lines)
+- [Integration Analysis](docs/SERVICE-INTEGRATION-ANALYSIS.md) - Architecture and integration status
+- [Control Plane Summary](CONTROL-PLANE-SUMMARY.md) - Implementation overview and results
+
+### Version 2.0.0 Documentation
 - [Service Architecture Guide](SERVICE-ARCHITECTURE.md) - Complete port mapping and service dependencies
 - [Deployment Analysis Report](DEPLOYMENT-ANALYSIS-REPORT.md) - Infrastructure audit and production readiness
 - [Production Validation Report](FINAL-PRODUCTION-VALIDATION-REPORT.md) - Comprehensive deployment validation

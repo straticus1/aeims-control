@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2025-01-05
+
+### Unified Control Plane & Service Discovery
+
+#### Added
+- **Unified Control Plane CLI (`aeims-ctl`)**: Complete service management tool with 1000+ lines of code
+  - Service lifecycle management: start, stop, restart, status
+  - Real-time log streaming with follow support
+  - Health endpoint monitoring across all services
+  - JSON output for automation and CI/CD integration
+  - Multi-repository support (aeims, aeims-control, telephony-platform)
+  - 18 registered services across 3 repositories
+  - Colorized terminal output for better readability
+  - Docker Compose integration for seamless orchestration
+
+- **Service Discovery System**: Automated detection of running services
+  - Local Docker container detection and enumeration
+  - AWS ECS service and task discovery across all clusters
+  - Multi-cluster support (aeims, lonelyfyi, veribits, purrr, diseasezone, outofwork, afterdarksys)
+  - Enrollment workflow for discovered services
+  - Audit reports for enrolled vs unregistered services
+  - Found 48 AWS ECS services and 4 local containers in initial scan
+  - JSON output for automated service inventory
+
+- **Operational Scripts**: New emergency and monitoring tools
+  - `emergency-site-restore.sh` - Site recovery and disaster recovery procedures
+  - `setup-monitoring.sh` - Monitoring stack deployment automation
+  - `get-secrets.sh` - Secrets management and retrieval
+  - `validate-docker-contexts.sh` - Docker environment validation
+
+- **Comprehensive Documentation**: 2000+ lines of new documentation
+  - [CONTROL-PLANE.md](docs/CONTROL-PLANE.md) - Complete CLI reference (500+ lines)
+  - [AEIMS-CTL-QUICK-START.md](docs/AEIMS-CTL-QUICK-START.md) - Essential commands guide
+  - [DETECT-FEATURE.md](docs/DETECT-FEATURE.md) - Service discovery guide (400+ lines)
+  - [SERVICE-INTEGRATION-ANALYSIS.md](docs/SERVICE-INTEGRATION-ANALYSIS.md) - Architecture analysis
+  - [CONTROL-PLANE-SUMMARY.md](CONTROL-PLANE-SUMMARY.md) - Implementation overview
+
+#### Enhanced
+- **Service Management**: Complete lifecycle control for all AEIMS services
+  - Start/stop/restart operations for individual or all services
+  - Real-time status monitoring with color-coded display
+  - Service health checks with HTTP endpoint validation
+  - Log viewing and streaming with follow mode
+  - Container listing and inspection
+
+- **Cloud Integration**: Deep AWS ECS visibility
+  - Multi-cluster service discovery
+  - Task enumeration and status tracking
+  - Service enrollment from cloud resources
+  - Integration with existing AWS CLI workflows
+
+- **Developer Experience**: Streamlined workflows
+  - Single command for all service operations
+  - Cross-repository service management
+  - JSON output for automation scripts
+  - Verbose mode for debugging
+  - Consistent command interface
+
+#### Features
+- Multi-repository service registry (18 services)
+- Service detection across local Docker and AWS ECS
+- Health monitoring for all registered services
+- Real-time log streaming and aggregation
+- JSON API for automation and CI/CD
+- Enrollment workflow for discovered services
+- Audit capabilities for service inventory
+
+#### Infrastructure
+- Command-line tool architecture with modular design
+- Docker Compose integration for local orchestration
+- AWS CLI integration for cloud discovery
+- Service registry with metadata (type, port, health endpoint, repository)
+- Multi-environment support (local, staging, production)
+
+### Fixed
+- Cross-repository service management complexity
+- Manual docker-compose command execution
+- Service discovery and inventory tracking
+- Log access across multiple repositories
+- Health check coordination
+
+### Changed
+- Simplified service management workflow
+- Centralized service registry
+- Unified command interface for all operations
+- Enhanced documentation structure
+
 ## [2.0.0] - 2025-10-07
 
 ### Major Infrastructure Overhaul & Production Deployment
