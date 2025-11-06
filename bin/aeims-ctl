@@ -29,12 +29,22 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// Import reconciliation modules
+const ManifestTracker = require('../lib/manifest-tracker');
+const DriftDetector = require('../lib/drift-detector');
+const ReconciliationController = require('../lib/reconciliation-controller');
+
 class AeimsControlPlane {
   constructor() {
     this.homedir = os.homedir();
     this.baseDir = path.join(this.homedir, 'development');
     this.jsonOutput = false;
     this.verbose = false;
+
+    // Initialize reconciliation components
+    this.manifestTracker = new ManifestTracker();
+    this.driftDetector = new DriftDetector();
+    this.reconciliationController = new ReconciliationController();
 
     // Service registry - maps all known services to their locations
     this.serviceRegistry = {
@@ -913,6 +923,174 @@ class AeimsControlPlane {
     this.output('✓ All services restarted', 'success');
   }
 
+  // Drift detection
+  async drift(service, cluster = 'aeims-cluster-production') {
+    await this.manifestTracker.initialize();
+
+    if (service && service !== 'all') {
+      const result = await this.driftDetector.detectServiceDrift(service, cluster);
+
+      if (this.jsonOutput) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        this.displayDriftResult(result);
+      }
+    } else {
+      const results = await this.driftDetector.detectAllDrift(cluster);
+
+      if (this.jsonOutput) {
+        console.log(JSON.stringify(results, null, 2));
+      } else {
+        console.log(this.driftDetector.generateReport(results));
+      }
+    }
+  }
+
+  // Display drift result in human-readable format
+  displayDriftResult(drift) {
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`Service: ${drift.serviceName}`);
+    console.log(`${'='.repeat(70)}\n`);
+
+    if (!drift.hasDrift) {
+      console.log('✅ No drift detected - service is in sync\n');
+      return;
+    }
+
+    const severityColors = {
+      'CRITICAL': this.colors.red,
+      'HIGH': this.colors.red,
+      'MEDIUM': this.colors.yellow,
+      'LOW': this.colors.cyan,
+      'NONE': this.colors.green
+    };
+
+    const severityColor = severityColors[drift.severity] || '';
+
+    console.log(`${severityColor}${drift.severity}${this.colors.reset} - ${drift.message}\n`);
+
+    for (const d of drift.drifts) {
+      console.log(`  ${d.field}:`);
+      console.log(`    Manifest: ${JSON.stringify(d.manifest)}`);
+      console.log(`    AWS:      ${JSON.stringify(d.aws)}`);
+      console.log(`    ${d.message}\n`);
+    }
+  }
+
+  // Reconcile services
+  async reconcile(service, flags = {}) {
+    await this.manifestTracker.initialize();
+
+    const controller = new ReconciliationController({
+      dryRun: flags.dryRun || false,
+      autoApprove: flags.autoApprove || false
+    });
+
+    const cluster = flags.cluster || 'aeims-cluster-production';
+
+    if (service && service !== 'all') {
+      await controller.reconcileService(service, cluster);
+    } else {
+      const results = await controller.reconcileAll(cluster);
+      console.log(controller.generateReport(results));
+    }
+  }
+
+  // Show deployment manifest
+  async manifest(service) {
+    await this.manifestTracker.initialize();
+
+    if (!service) {
+      // Show summary of all manifests
+      const summary = await this.manifestTracker.getSummary();
+
+      if (this.jsonOutput) {
+        console.log(JSON.stringify(summary, null, 2));
+      } else {
+        console.log('\n=== DEPLOYMENT MANIFESTS ===\n');
+        for (const item of summary) {
+          console.log(`📦 ${item.serviceName}`);
+          console.log(`   Last deployed: ${item.lastDeployed || 'Never'}`);
+          console.log(`   Recent deployments: ${item.recentDeployments}`);
+          if (item.currentDeployment) {
+            console.log(`   Version: ${item.currentDeployment.version || 'N/A'}`);
+            console.log(`   Image: ${item.currentDeployment.image?.fullRef || 'N/A'}`);
+          }
+          console.log();
+        }
+      }
+    } else {
+      // Show specific service manifest
+      const current = await this.manifestTracker.getCurrentState(service);
+
+      if (!current) {
+        console.log(`No manifest found for ${service}`);
+        return;
+      }
+
+      if (this.jsonOutput) {
+        console.log(JSON.stringify(current, null, 2));
+      } else {
+        console.log('\n=== DEPLOYMENT MANIFEST ===\n');
+        console.log(`Service: ${current.serviceName}`);
+        console.log(`Version: ${current.version || 'N/A'}`);
+        console.log(`Deployed: ${current.timestamp}`);
+        console.log(`Deployer: ${current.metadata?.deployer || 'Unknown'}`);
+        console.log(`\nImage: ${current.image?.fullRef || 'N/A'}`);
+        console.log(`Digest: ${current.image?.digest || 'N/A'}`);
+        console.log(`\nGit Commit: ${current.git?.commit || 'N/A'}`);
+        console.log(`Git Branch: ${current.git?.branch || 'N/A'}`);
+        console.log(`\nAWS Task Definition: ${current.aws?.taskDefinitionArn || 'N/A'}`);
+        console.log(`Desired Count: ${current.aws?.desiredCount || 'N/A'}`);
+        console.log();
+      }
+    }
+  }
+
+  // Show deployment history
+  async history(service, limit = 10) {
+    await this.manifestTracker.initialize();
+
+    if (!service) {
+      console.log('Please specify a service name');
+      return;
+    }
+
+    const history = await this.manifestTracker.getHistory(service, limit);
+
+    if (history.length === 0) {
+      console.log(`No deployment history for ${service}`);
+      return;
+    }
+
+    if (this.jsonOutput) {
+      console.log(JSON.stringify(history, null, 2));
+    } else {
+      console.log(`\n=== DEPLOYMENT HISTORY: ${service} ===\n`);
+
+      for (const deployment of history) {
+        console.log(`🔹 ${deployment.deploymentId}`);
+        console.log(`   Timestamp: ${deployment.timestamp}`);
+        console.log(`   Version: ${deployment.version || 'N/A'}`);
+        console.log(`   Image: ${deployment.image?.fullRef || 'N/A'}`);
+        console.log(`   Deployer: ${deployment.metadata?.deployer || 'Unknown'}`);
+        console.log();
+      }
+    }
+  }
+
+  // Rollback service
+  async rollback(service, deploymentId) {
+    await this.manifestTracker.initialize();
+
+    if (!service || !deploymentId) {
+      console.log('Usage: aeims-ctl rollback <service> <deploymentId>');
+      return;
+    }
+
+    await this.reconciliationController.rollbackService(service, deploymentId);
+  }
+
   // Show help
   showHelp() {
     const help = `
@@ -921,7 +1099,7 @@ ${this.colors.bright}AEIMS Control Plane${this.colors.reset} - Unified service m
 ${this.colors.cyan}USAGE:${this.colors.reset}
   aeims-ctl <command> [options]
 
-${this.colors.cyan}COMMANDS:${this.colors.reset}
+${this.colors.cyan}SERVICE MANAGEMENT:${this.colors.reset}
   ${this.colors.green}status [service]${this.colors.reset}           Show status of all or specific service
   ${this.colors.green}list${this.colors.reset}                       List all available services
   ${this.colors.green}start <service|all>${this.colors.reset}        Start service(s)
@@ -930,30 +1108,50 @@ ${this.colors.cyan}COMMANDS:${this.colors.reset}
   ${this.colors.green}logs <service>${this.colors.reset}             View service logs
   ${this.colors.green}health [service]${this.colors.reset}           Check health endpoints
   ${this.colors.green}ps${this.colors.reset}                         Show running containers
+
+${this.colors.cyan}SERVICE DISCOVERY:${this.colors.reset}
   ${this.colors.green}detect${this.colors.reset}                     Detect unregistered services
   ${this.colors.green}enroll <container>${this.colors.reset}         Enroll discovered service
+
+${this.colors.cyan}RECONCILIATION & DEPLOYMENT:${this.colors.reset}
+  ${this.colors.green}drift [service|all]${this.colors.reset}        Detect configuration drift
+  ${this.colors.green}reconcile <service|all>${this.colors.reset}    Reconcile service to desired state
+  ${this.colors.green}manifest [service]${this.colors.reset}         Show deployment manifest(s)
+  ${this.colors.green}history <service>${this.colors.reset}          Show deployment history
+  ${this.colors.green}rollback <service> <id>${this.colors.reset}    Rollback to previous deployment
 
 ${this.colors.cyan}FLAGS:${this.colors.reset}
   ${this.colors.yellow}--json${this.colors.reset}                     Output in JSON format
   ${this.colors.yellow}--verbose, -v${this.colors.reset}              Verbose output
   ${this.colors.yellow}--follow, -f${this.colors.reset}               Follow logs (for logs command)
+  ${this.colors.yellow}--dry-run${this.colors.reset}                  Show what would happen (for reconcile)
+  ${this.colors.yellow}--auto-approve${this.colors.reset}             Skip confirmation prompts (for reconcile)
   ${this.colors.yellow}--local${this.colors.reset}                    Detect local Docker containers
   ${this.colors.yellow}--aws${this.colors.reset}                      Detect AWS ECS services
   ${this.colors.yellow}--all${this.colors.reset}                      Detect all sources
   ${this.colors.yellow}--help, -h${this.colors.reset}                 Show this help
 
 ${this.colors.cyan}EXAMPLES:${this.colors.reset}
+  ${this.colors.dim}# Service management${this.colors.reset}
   aeims-ctl status                  # Show status of all services
-  aeims-ctl status redis            # Show status of redis service
   aeims-ctl start aeims-core        # Start aeims-core service
-  aeims-ctl restart all             # Restart all services
   aeims-ctl logs aeims-lib -f       # Follow logs for aeims-lib
-  aeims-ctl health                  # Check all health endpoints
-  aeims-ctl detect                  # Detect unregistered local services
+
+  ${this.colors.dim}# Service discovery${this.colors.reset}
   aeims-ctl detect --aws            # Detect AWS ECS services
-  aeims-ctl detect --all            # Detect all services (local + AWS)
   aeims-ctl enroll my-container     # Enroll a discovered container
-  aeims-ctl list --json             # List services in JSON format
+
+  ${this.colors.dim}# Drift detection & reconciliation${this.colors.reset}
+  aeims-ctl drift admin-service     # Check drift for admin service
+  aeims-ctl drift all               # Check drift for all services
+  aeims-ctl reconcile admin-service # Reconcile admin service
+  aeims-ctl reconcile all --dry-run # Dry-run reconciliation for all
+
+  ${this.colors.dim}# Deployment management${this.colors.reset}
+  aeims-ctl manifest                # Show all deployment manifests
+  aeims-ctl manifest admin-service  # Show specific service manifest
+  aeims-ctl history admin-service   # View deployment history
+  aeims-ctl rollback admin-service admin-service-1699876543210
 
 ${this.colors.dim}For more information, visit: https://github.com/afterdarksystems/aeims${this.colors.reset}
 `;
@@ -1015,6 +1213,24 @@ ${this.colors.dim}For more information, visit: https://github.com/afterdarksyste
             throw new Error('Please specify a container name to enroll');
           }
           await this.enrollService(parsed.target);
+          break;
+        case 'drift':
+          await this.drift(parsed.target, parsed.flags.cluster);
+          break;
+        case 'reconcile':
+          await this.reconcile(parsed.target, parsed.flags);
+          break;
+        case 'manifest':
+          await this.manifest(parsed.target);
+          break;
+        case 'history':
+          const historyLimit = parseInt(parsed.flags.limit) || 10;
+          await this.history(parsed.target, historyLimit);
+          break;
+        case 'rollback':
+          const rollbackTarget = parsed.args[0];
+          const deploymentId = parsed.args[1];
+          await this.rollback(rollbackTarget, deploymentId);
           break;
         default:
           this.output(`Unknown command: ${parsed.command}`, 'error');

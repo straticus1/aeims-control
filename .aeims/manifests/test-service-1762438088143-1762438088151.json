@@ -1,0 +1,32 @@
+{
+  "deploymentId": "test-service-1762438088143-1762438088151",
+  "serviceName": "test-service-1762438088143",
+  "version": "1.0.0",
+  "timestamp": "2025-11-06T14:08:08.149Z",
+  "environment": "test",
+  "git": {
+    "commit": "365817f0d92f8444409d0bb3b0dba915a4571af3",
+    "branch": "main"
+  },
+  "image": {
+    "name": "test-image",
+    "tag": "latest",
+    "digest": null,
+    "fullRef": "test-image:latest"
+  },
+  "config": {
+    "hash": "c83628bbb40c7697808dbb6ef8b7d10f89acbb06cde1e4b406fadad30f5a9586",
+    "data": {
+      "TEST_VAR": "test-value"
+    }
+  },
+  "aws": {
+    "taskDefinitionArn": "arn:aws:ecs:test",
+    "desiredCount": 2,
+    "region": "us-east-1"
+  },
+  "metadata": {
+    "deployer": "ryan",
+    "hostname": "MacBookPro"
+  }
+}
